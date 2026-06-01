@@ -1751,7 +1751,7 @@ function migrateFilingData(f) {
     }
   });
 
-  return { g1: g1Obj, g3: g3Obj, _dbId: f._dbId };
+  return { g1: g1Obj, g3: g3Obj, _dbId: f.id || f._dbId };
 }
 
 function getOrInitFiling(c, pid) {
