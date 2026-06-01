@@ -1572,6 +1572,7 @@ let queueIndex = 0;
 let filterCategory = "all";
 let filterStage = "all";
 let selectedFollowupKeys = [];
+let manualWhatsAppWeb = localStorage.getItem("gst_wa_manual") === "true";
 let pg = 1, pgProg = 1;
 const PER = 15;
 let expandedId = null, expandedProgId = null;
@@ -3442,6 +3443,11 @@ function renderFollowUps() {
           <option value="manager_call" ${filterStage==="manager_call"?"selected":""}>Manager Call</option>
         </select>
         
+        <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer;color:var(--text2);margin-left:8px">
+          <input type="checkbox" id="wa-manual-toggle" onchange="manualWhatsAppWeb=this.checked;localStorage.setItem('gst_wa_manual',manualWhatsAppWeb);renderFollowUps()" ${manualWhatsAppWeb?"checked":""}>
+          Manual select
+        </label>
+        
         <button class="btn btn-blue" style="margin-left:auto" onclick="startBulkFollowupDispatch()">💬 Send Message to Selected Groups (${selectedFollowupKeys.length})</button>
       </div>
 
@@ -3521,8 +3527,8 @@ async function dispatchNextQueueItem() {
 
   const msgText = getFollowupMessageText(item);
   navigator.clipboard.writeText(msgText).then(() => {
-    showToast("📋", `Message copied! Redirecting to group chat.`);
-    const groupLink = item.client.whatsapp_group || `https://wa.me/${(item.client.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`;
+    showToast("📋", `Message copied! Opening WhatsApp.`);
+    const groupLink = manualWhatsAppWeb ? "https://web.whatsapp.com/" : (item.client.whatsapp_group || `https://wa.me/${(item.client.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`);
     window.open(groupLink, "_blank");
 
     queueIndex++;
@@ -3554,18 +3560,19 @@ async function sendSingleWhatsAppFollowup(cid, category) {
 
   const mockItem = { client: c, category, period: CUR };
   const msgText = getFollowupMessageText(mockItem);
-  const waLink = `https://wa.me/${(c.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`;
-  
-  window.open(waLink, "_blank");
-  renderFollowUps();
-  showToast("💬", `WhatsApp opened for ${c.name}!`);
+  navigator.clipboard.writeText(msgText).then(() => {
+    const waLink = manualWhatsAppWeb ? "https://web.whatsapp.com/" : `https://wa.me/${(c.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`;
+    window.open(waLink, "_blank");
+    renderFollowUps();
+    showToast("💬", `WhatsApp opened! Message copied to clipboard.`);
+  });
 }
 
 async function sendGroupWhatsAppFollowup(cid, category) {
   const c = clients.find(x => x.id === cid);
   if (!c) return;
 
-  if (!c.whatsapp_group) {
+  if (!c.whatsapp_group && !manualWhatsAppWeb) {
     showToast("⚠️", "No WhatsApp group tagged for this client!");
     return;
   }
@@ -3585,9 +3592,10 @@ async function sendGroupWhatsAppFollowup(cid, category) {
   const msgText = getFollowupMessageText(mockItem);
   
   navigator.clipboard.writeText(msgText).then(() => {
-    window.open(c.whatsapp_group, "_blank");
+    const groupLink = manualWhatsAppWeb ? "https://web.whatsapp.com/" : c.whatsapp_group;
+    window.open(groupLink, "_blank");
     renderFollowUps();
-    showToast("📋", "Copied group template and opened Group link!");
+    showToast("📋", "Copied template and opened WhatsApp!");
   });
 }
 
