@@ -660,6 +660,37 @@ tr.dr.expanded td{background:rgba(59,130,246,.05)}
   outline:none;flex-shrink:0;transition:border-color .15s;
 }
 .ssel:focus{border-color:var(--blue)}
+.stage-toggle-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: var(--font);
+  font-weight: 600;
+  outline: none;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  border: 1px solid transparent;
+}
+.stage-toggle-btn.done {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.3);
+}
+.stage-toggle-btn.done:hover {
+  background: rgba(34, 197, 94, 0.25);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+.stage-toggle-btn.pending {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text3);
+  border-color: var(--border);
+}
+.stage-toggle-btn.pending:hover {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
+  border-color: var(--text3);
+}
 .locked-msg{
   font-size:11px;color:var(--amber);
   background:var(--amber-lt);border-radius:var(--r);
@@ -2961,9 +2992,9 @@ function openClientModal(cid, pid) {
         <div class="stage-item">
           <div class="snum" style="background:${stColor(s)}">${i+1}</div>
           <div class="slbl" title="${escapeHTML(step.label)}">${escapeHTML(step.label)}</div>
-          <select class="ssel" onchange="updStage('${cid}','${fpid}','g1','${step.id}',this.value)">
-            ${CONFIG.statuses.map(st=>`<option value="${st.name}"${st.name===s?" selected":""}>${st.name}</option>`).join("")}
-          </select>
+          <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${cid}','${fpid}','g1','${step.id}','${s}',false)">
+            ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+          </button>
         </div>`;
     }).join("");
 
@@ -2974,9 +3005,9 @@ function openClientModal(cid, pid) {
             <div class="stage-item">
               <div class="snum" style="background:${stColor(s)}">${i+1}</div>
               <div class="slbl" title="${escapeHTML(step.label)}">${escapeHTML(step.label)}</div>
-              <select class="ssel" onchange="updStage('${cid}','${fpid}','g3','${step.id}',this.value)">
-                ${CONFIG.statuses.map(st=>`<option value="${st.name}"${st.name===s?" selected":""}>${st.name}</option>`).join("")}
-              </select>
+              <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${cid}','${fpid}','g3','${step.id}','${s}',false)">
+                ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+              </button>
             </div>`;
         }).join("")
       : `<div class="locked-msg">🔒 Complete GSTR-1 first to unlock GSTR-3B</div>`;
@@ -3012,6 +3043,15 @@ function openClientModal(cid, pid) {
 }
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
+
+async function toggleStageBtn(cid, pid, track, stepId, curVal, isProg = false) {
+  const newVal = (curVal === "FILED") ? "PENDING" : "FILED";
+  if (isProg) {
+    await updStageProg(cid, pid, track, stepId, newVal);
+  } else {
+    await updStage(cid, pid, track, stepId, newVal);
+  }
+}
 
 async function updStage(cid, pid, track, stepId, val) {
   const c = clients.find(x => x.id === cid);
@@ -3183,9 +3223,9 @@ function buildSpvDetail(c, fp, f) {
       <div class="stage-item">
         <div class="snum" style="background:${stColor(s)}">${i+1}</div>
         <div class="slbl" style="font-size:11px">${escapeHTML(step.label)}</div>
-        <select class="ssel" onchange="updStageProg('${c.id}','${fp}','g1','${step.id}',this.value)">
-          ${CONFIG.statuses.map(st=>`<option value="${st.name}"${st.name===s?" selected":""}>${st.name}</option>`).join("")}
-        </select>
+        <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${c.id}','${fp}','g1','${step.id}','${s}',true)">
+          ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+        </button>
       </div>`;
   }).join("");
   
@@ -3196,9 +3236,9 @@ function buildSpvDetail(c, fp, f) {
           <div class="stage-item">
             <div class="snum" style="background:${stColor(s)}">${i+1}</div>
             <div class="slbl" style="font-size:11px">${escapeHTML(step.label)}</div>
-            <select class="ssel" onchange="updStageProg('${c.id}','${fp}','g3','${step.id}',this.value)">
-              ${CONFIG.statuses.map(st=>`<option value="${st.name}"${st.name===s?" selected":""}>${st.name}</option>`).join("")}
-            </select>
+            <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${c.id}','${fp}','g3','${step.id}','${s}',true)">
+              ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+            </button>
           </div>`;
       }).join("")
     : `<div class="locked-msg">🔒 Complete GSTR-1 first to unlock GSTR-3B</div>`;
