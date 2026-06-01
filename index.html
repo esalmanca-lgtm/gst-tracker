@@ -3857,7 +3857,7 @@ async function togglePeriod(id, label, type, fy) {
 
 // ── Excel bulk upload ───────────────────────────────────────────
 function downloadExcelTemplate() {
-  const csv = "Client Name,GSTIN,Frequency (M or Q),Monthly Rent (INR),RCM Applicable (Yes or No)\nZara Exports Pvt Ltd,29AABCZ1234F1Z5,M,25000,No\nRoyal Garments,27AABCR9012H1Z8,Q,0,Yes";
+  const csv = "Client Name,GSTIN,Frequency (M or Q),Monthly Rent (INR),RCM Applicable (Yes or No),Email,Phone\nZara Exports Pvt Ltd,29AABCZ1234F1Z5,M,25000,No,zara@exports.com,9876543210\nRoyal Garments,27AABCR9012H1Z8,Q,0,Yes,royal@garments.com,9876543211";
   const blob = new Blob([csv], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -3872,7 +3872,7 @@ async function uploadExcelClients(event) {
   event.target.value = "";
   
   async function processRowList(rowsList) {
-    let added = 0, skipped = 0;
+    let added = 0, updated = 0, skipped = 0;
     showToast("⏳", `Processing ${rowsList.length} rows…`, 8000);
     for (const row of rowsList) {
       const name = row.name;
@@ -3885,12 +3885,41 @@ async function uploadExcelClients(event) {
       
       if (!name) { skipped++; continue; }
       
-      // Duplicate check (case-insensitive name or exact GSTIN check)
-      const isDuplicate = clients.some(c => 
+      // Find existing client (case-insensitive name or exact GSTIN check)
+      const existingClient = clients.find(c => 
         c.name.toLowerCase() === name.toLowerCase() || 
         (gstin && c.gstin && c.gstin.toLowerCase() === gstin.toLowerCase())
       );
-      if (isDuplicate) { skipped++; continue; }
+      
+      if (existingClient) {
+        // Update client details
+        existingClient.name = name;
+        if (gstin) existingClient.gstin = gstin;
+        existingClient.freq = freq;
+        existingClient.rent_amount = rent;
+        existingClient.rcm_applicable = rcm;
+        if (email) existingClient.email = email;
+        if (phone) existingClient.phone = phone;
+        
+        try {
+          if (!IS_DEMO) {
+            await sbFetch("PATCH", `/rest/v1/clients?id=eq.${existingClient.id}`, {
+              name: existingClient.name,
+              gstin: existingClient.gstin,
+              freq: existingClient.freq,
+              rent_amount: existingClient.rent_amount,
+              rcm_applicable: existingClient.rcm_applicable,
+              email: existingClient.email,
+              phone: existingClient.phone
+            });
+          }
+          updated++;
+        } catch(e) {
+          console.error("Error updating client:", e);
+          skipped++;
+        }
+        continue;
+      }
       
       try {
         const clientData = await createClientWithFilings(name, gstin, freq, rent, rcm, email, phone);
@@ -3902,7 +3931,10 @@ async function uploadExcelClients(event) {
       }
     }
     pg = 1; renderClients(); updateArrBadge();
-    showToast("✓", `${added} clients added${skipped ? `, ${skipped} skipped` : ""}!`);
+    let msg = `${added} client${added === 1 ? '' : 's'} added`;
+    if (updated > 0) msg += `, ${updated} updated`;
+    if (skipped > 0) msg += `, ${skipped} skipped`;
+    showToast("✓", msg + "!");
   }
   
   if (file.name.endsWith(".csv")) {
@@ -3917,7 +3949,9 @@ async function uploadExcelClients(event) {
         gstin: cols[1],
         freq: (cols[2]||"M").toUpperCase(),
         rent: parseFloat(cols[3]) || 0,
-        rcm: (cols[4]||"").toLowerCase().includes("yes")
+        rcm: (cols[4]||"").toLowerCase().includes("yes"),
+        email: cols[5] || "",
+        phone: cols[6] || ""
       };
     });
     await processRowList(rowsList);
@@ -3939,7 +3973,9 @@ async function uploadExcelClients(event) {
       const freq = String(row["Frequency (M or Q)"] || "M").toUpperCase();
       const rent = parseFloat(row["Monthly Rent (INR)"]) || 0;
       const rcm = String(row["RCM Applicable (Yes or No)"] || "").toLowerCase().includes("yes");
-      return { name, gstin, freq, rent, rcm };
+      const email = String(row["Email"] || row["Email Address"] || "").trim();
+      const phone = String(row["Phone"] || row["Phone Number"] || row["Mobile"] || "").trim();
+      return { name, gstin, freq, rent, rcm, email, phone };
     });
     await processRowList(rowsList);
   };
