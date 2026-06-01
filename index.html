@@ -1208,6 +1208,7 @@ CREATE TABLE IF NOT EXISTS clients (
   portal_username text DEFAULT '',
   portal_password text DEFAULT '',
   notes text DEFAULT '',
+  whatsapp_group text DEFAULT '',
   created_at timestamptz DEFAULT now()
 );
 
@@ -1234,6 +1235,17 @@ CREATE TABLE IF NOT EXISTS system_config (
   key text PRIMARY KEY,
   value jsonb NOT NULL,
   updated_at timestamptz DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS followups (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  client_id uuid REFERENCES clients(id) ON DELETE CASCADE,
+  category text NOT NULL,
+  wa_count integer DEFAULT 0,
+  stage text DEFAULT 'whatsapp',
+  notes text DEFAULT '',
+  updated_at timestamptz DEFAULT now(),
+  UNIQUE(client_id, category)
 );
 
 -- Seed default periods
@@ -1317,6 +1329,7 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;</div>
     <button class="settings-tab-btn active" id="stab-gen" onclick="switchSettingsTab('general')">Connection</button>
     <button class="settings-tab-btn" id="stab-status" onclick="switchSettingsTab('statuses')">Statuses</button>
     <button class="settings-tab-btn" id="stab-steps" onclick="switchSettingsTab('steps')">Steps</button>
+    <button class="settings-tab-btn" id="stab-templates" onclick="switchSettingsTab('templates')">Templates</button>
   </div>
   
   <!-- General Connection & Periods tab -->
@@ -1399,6 +1412,30 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;</div>
       <button class="btn btn-blue" style="width:100%" onclick="addCustomStep()">➕ Add Step</button>
     </div>
   </div>
+  
+  <!-- Message Templates Configuration tab -->
+  <div class="settings-tab-content" id="scontent-templates">
+    <div class="settings-lbl">Follow-Up Message Templates</div>
+    <div class="settings-section">
+      <div class="ws-form-group">
+        <label class="ws-lbl">Data Collection Template</label>
+        <textarea id="temp-editor-data" class="inp" style="width:100%;height:75px;font-size:12px" oninput="saveTemplateConfig('data_collection', this.value)"></textarea>
+      </div>
+      <div class="ws-form-group" style="margin-top:10px">
+        <label class="ws-lbl">Report Approval Template</label>
+        <textarea id="temp-editor-approval" class="inp" style="width:100%;height:75px;font-size:12px" oninput="saveTemplateConfig('approval', this.value)"></textarea>
+      </div>
+      <div class="ws-form-group" style="margin-top:10px">
+        <label class="ws-lbl">Payment Followup Template</label>
+        <textarea id="temp-editor-payment" class="inp" style="width:100%;height:75px;font-size:12px" oninput="saveTemplateConfig('payment', this.value)"></textarea>
+      </div>
+      <div style="background:var(--bg3);padding:10px;border-radius:var(--r);border:1px dashed var(--border);font-size:10px;color:var(--text3);margin-top:10px;line-height:1.4">
+        <strong>Placeholders:</strong><br>
+        Use <code style="color:var(--blue)">{name}</code> for client name.<br>
+        Use <code style="color:var(--blue)">{period}</code> for active period.
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Toast -->
@@ -1454,6 +1491,7 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;</div>
     <button class="nav-tab" onclick="switchTab('progress')">📈 Progress</button>
     <button class="nav-tab" onclick="switchTab('arrears')">⚠️ Arrears <span class="nav-ct" id="arr-ct">0</span></button>
     <button class="nav-tab" onclick="switchTab('stages')">📋 Stages</button>
+    <button class="nav-tab" onclick="switchTab('whatsapp')">💬 Follow-ups</button>
   </div>
 
   <div class="main">
@@ -1462,6 +1500,7 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;</div>
     <div id="tab-progress" class="section"></div>
     <div id="tab-arrears" class="section"></div>
     <div id="tab-stages" class="section"></div>
+    <div id="tab-whatsapp" class="section"></div>
     <div id="tab-client-profile" class="section"></div>
   </div>
 </div>
@@ -1494,7 +1533,12 @@ let CONFIG = {
     { id: "g3_s2", label: "Enter RCM details" },
     { id: "g3_s3", label: "Send fee calculation & collect" },
     { id: "g3_s4", label: "File GSTR-3B" }
-  ]
+  ],
+  templates: {
+    data_collection: "Dear {name}, this is GST Follow-up. Please share your invoice details and ICEGATE data for {period} so we can initiate GSTR-1 filings. Regards, Team.",
+    approval: "Hi {name}, your reconciliation report for {period} is ready. Please review and approve it so we can finalize GSTR-1. Regards.",
+    payment: "Dear {name}, we request you to clear the pending filing invoice amount for {period}. Please ignore if already paid."
+  }
 };
 
 // Legacy compatibility helpers (maps getters to dynamic list labels)
@@ -1522,6 +1566,12 @@ let CUR = "May-2025";
 let DASH_FREQ = "all";
 let clients = [];
 let selectedClientIds = [];
+let followups = [];
+let activeQueue = [];
+let queueIndex = 0;
+let filterCategory = "all";
+let filterStage = "all";
+let selectedFollowupKeys = [];
 let pg = 1, pgProg = 1;
 const PER = 15;
 let expandedId = null, expandedProgId = null;
@@ -1848,6 +1898,12 @@ async function launchApp() {
   if (!IS_DEMO) {
     await loadFromSupabase();
     subscribeRealtime();
+  } else {
+    try {
+      followups = JSON.parse(localStorage.getItem("gst_followups") || "[]");
+    } catch(e) {
+      followups = [];
+    }
   }
   initSettingsPanel();
   renderPeriodBar();
@@ -1896,22 +1952,28 @@ async function testConnection(url, key) {
 async function loadFromSupabase() {
   try {
     await loadConfig();
-    const [cRes, fRes, pRes] = await Promise.all([
+    const [cRes, fRes, pRes, folRes] = await Promise.all([
       sbFetch("GET", "/rest/v1/clients?select=*&order=name"),
       sbFetch("GET", "/rest/v1/filings?select=*"),
       sbFetch("GET", "/rest/v1/periods?select=*&order=sort_order"),
+      sbFetch("GET", "/rest/v1/followups?select=*")
     ]);
     const rawClients = await cRes.json();
     const rawFilings = await fRes.json();
     const rawPeriods = await pRes.json();
+    let rawFollowups = [];
+    try {
+      if (folRes.ok) rawFollowups = await folRes.json();
+    } catch(e) {}
     
     // Polling Optimization: check if data actually changed
-    const snapshot = JSON.stringify(rawClients) + JSON.stringify(rawFilings) + JSON.stringify(rawPeriods);
+    const snapshot = JSON.stringify(rawClients) + JSON.stringify(rawFilings) + JSON.stringify(rawPeriods) + JSON.stringify(rawFollowups);
     if (snapshot === lastSyncSnapshot) {
       setSyncStatus("live");
       return;
     }
     lastSyncSnapshot = snapshot;
+    followups = rawFollowups;
     
     if (Array.isArray(rawPeriods) && rawPeriods.length > 0) {
       PERIODS = rawPeriods.map(p => ({ id: p.id, label: p.label, type: p.type, fy: p.fy || "" }));
@@ -1934,6 +1996,7 @@ async function loadFromSupabase() {
         portal_username: c.portal_username || "",
         portal_password: c.portal_password || "",
         notes: c.notes || "",
+        whatsapp_group: c.whatsapp_group || "",
         filings
       };
     });
@@ -1983,13 +2046,13 @@ async function saveStage(clientId, periodId, track, val) {
   }
 }
 
-async function addClientToDB(name, gstin, freq, rent_amount=0, rcm_applicable=false, email="", phone="", portal_username="", portal_password="", notes="") {
+async function addClientToDB(name, gstin, freq, rent_amount=0, rcm_applicable=false, email="", phone="", portal_username="", portal_password="", notes="", whatsapp_group="") {
   if (IS_DEMO) {
     const id = String(Date.now());
-    return { id, name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes };
+    return { id, name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes, whatsapp_group };
   }
   const res = await sbFetch("POST", "/rest/v1/clients", { 
-    name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes 
+    name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes, whatsapp_group 
   });
   const data = await res.json();
   if (data && data[0]) {
@@ -2051,7 +2114,7 @@ function exportData() {
 // ═══════════════════════════════════════════════════════════════
 function switchTab(t, extra) {
   curTab = t;
-  const tabs = ["dash","clients","progress","arrears","stages"];
+  const tabs = ["dash","clients","progress","arrears","stages","whatsapp"];
   document.querySelectorAll(".nav-tab").forEach((el, i) => {
     el.classList.toggle("active", tabs[i] === t);
   });
@@ -2064,6 +2127,7 @@ function switchTab(t, extra) {
   if (t === "progress") { pgProg = 1; renderProgress(); }
   if (t === "arrears") renderArrears();
   if (t === "stages") renderStages();
+  if (t === "whatsapp") renderFollowUps();
   if (t === "client-profile" && extra) renderClientProfile(extra);
 }
 
@@ -2073,6 +2137,107 @@ function updateArrBadge() {
   const n = clients.filter(c => pendingPeriods(c).length > 0).length;
   document.getElementById("arr-ct").textContent = n;
 }
+
+async function saveFollowupToDB(f) {
+  if (IS_DEMO) {
+    const idx = followups.findIndex(x => x.client_id === f.client_id && x.category === f.category);
+    if (idx >= 0) followups[idx] = f;
+    else followups.push(f);
+    localStorage.setItem("gst_followups", JSON.stringify(followups));
+    return;
+  }
+  try {
+    const existing = followups.find(x => x.client_id === f.client_id && x.category === f.category);
+    if (existing && existing.id) {
+      await sbFetch("PATCH", `/rest/v1/followups?id=eq.${existing.id}`, {
+        wa_count: f.wa_count,
+        stage: f.stage,
+        notes: f.notes,
+        updated_at: new Date().toISOString()
+      });
+      Object.assign(existing, f);
+    } else {
+      const res = await sbFetch("POST", "/rest/v1/followups", {
+        client_id: f.client_id,
+        category: f.category,
+        wa_count: f.wa_count,
+        stage: f.stage,
+        notes: f.notes
+      });
+      const data = await res.json();
+      if (data && data[0]) {
+        f.id = data[0].id;
+        followups.push(f);
+      }
+    }
+    setSyncStatus("live");
+  } catch(e) {
+    console.error("Error saving followup:", e);
+    setSyncStatus("offline");
+  }
+}
+
+function getActiveFollowups() {
+  const list = [];
+  clients.forEach(c => {
+    const f = getOrInitFiling(c, CUR);
+    const ost = f ? overallSt(f) : "pending";
+    const doneG1 = ost === "done";
+    
+    // 1. Data Collection: GSTR-1 not filed
+    if (!doneG1) {
+      let dbRecord = followups.find(x => x.client_id === c.id && x.category === "data_collection");
+      if (!dbRecord) {
+        dbRecord = { client_id: c.id, category: "data_collection", wa_count: 0, stage: "whatsapp", notes: "" };
+      }
+      if (dbRecord.stage !== "resolved") {
+        list.push({
+          ...dbRecord,
+          client: c,
+          categoryLabel: "Data Collection",
+          period: CUR
+        });
+      }
+    }
+    
+    // 2. Report Approval: progress advanced but not done
+    const isAdvanced = f && (stagesDone(f) >= 4) && !doneG1;
+    if (isAdvanced) {
+      let dbRecord = followups.find(x => x.client_id === c.id && x.category === "approval");
+      if (!dbRecord) {
+        dbRecord = { client_id: c.id, category: "approval", wa_count: 0, stage: "whatsapp", notes: "" };
+      }
+      if (dbRecord.stage !== "resolved") {
+        list.push({
+          ...dbRecord,
+          client: c,
+          categoryLabel: "Report Approval",
+          period: CUR
+        });
+      }
+    }
+    
+    // 3. Payment: rent amount > 0 or has arrears
+    const pp = pendingPeriods(c);
+    const hasRent = c.rent_amount > 0;
+    if (hasRent || pp.length > 0) {
+      let dbRecord = followups.find(x => x.client_id === c.id && x.category === "payment");
+      if (!dbRecord) {
+        dbRecord = { client_id: c.id, category: "payment", wa_count: 0, stage: "whatsapp", notes: "" };
+      }
+      if (dbRecord.stage !== "resolved") {
+        list.push({
+          ...dbRecord,
+          client: c,
+          categoryLabel: "Payment Followup",
+          period: CUR
+        });
+      }
+    }
+  });
+  return list;
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 //  PERIOD BAR
@@ -2586,9 +2751,9 @@ function addClientDialog() {
   document.getElementById("modal").style.display = "flex";
 }
 
-async function createClientWithFilings(name, gstin, freq, rent_amount=0, rcm_applicable=false, email="", phone="", portal_username="", portal_password="", notes="") {
+async function createClientWithFilings(name, gstin, freq, rent_amount=0, rcm_applicable=false, email="", phone="", portal_username="", portal_password="", notes="", whatsapp_group="") {
   // 1. Save client row to database or demo state
-  const clientData = await addClientToDB(name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes);
+  const clientData = await addClientToDB(name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes, whatsapp_group);
   
   // 2. Initialize filings map for all active periods
   const perids = applyPeriods(freq);
@@ -3114,6 +3279,350 @@ function renderArrears() {
   </div>`;
 }
 
+function getFollowupMessageText(item) {
+  let template = CONFIG.templates[item.category] || "";
+  return template
+    .replace(/{name}/g, item.client.name)
+    .replace(/{period}/g, item.period);
+}
+
+function renderFollowUps() {
+  const el = document.getElementById("tab-whatsapp");
+  if (!el) return;
+
+  const activeList = getActiveFollowups();
+
+  // Filter
+  let filtered = activeList;
+  if (filterCategory !== "all") {
+    filtered = filtered.filter(x => x.category === filterCategory);
+  }
+  if (filterStage !== "all") {
+    filtered = filtered.filter(x => x.stage === filterStage);
+  }
+
+  // Count active stats
+  const totalActiveCount = activeList.length;
+  const waStageCount = activeList.filter(x => x.stage === "whatsapp").length;
+  const callStageCount = activeList.filter(x => x.stage === "direct_call").length;
+  const mgrStageCount = activeList.filter(x => x.stage === "manager_call").length;
+
+  // Queue Panel
+  let queuePanelHtml = "";
+  if (activeQueue.length > 0) {
+    if (queueIndex >= activeQueue.length) {
+      activeQueue = [];
+      queueIndex = 0;
+      showToast("✓", "Bulk message dispatch completed!");
+    } else {
+      const qItem = activeQueue[queueIndex];
+      const msgText = getFollowupMessageText(qItem);
+      const remaining = activeQueue.length - queueIndex;
+      queuePanelHtml = `
+        <div style="background:rgba(59, 130, 246, 0.1); border:1px solid rgba(59, 130, 246, 0.2); border-radius:var(--rl); padding:16px; margin-bottom:16px">
+          <div style="font-size:13px; font-weight:700; color:var(--blue); margin-bottom:8px; display:flex; justify-content:space-between; align-items:center">
+            <span>🚀 Bulk Dispatch Queue</span>
+            <span>Step ${queueIndex + 1} of ${activeQueue.length} (${remaining} remaining)</span>
+          </div>
+          <div style="font-size:12px; line-height:1.4">
+            <p style="margin: 0 0 12px 0; font-family:var(--mono); padding: 10px; background: rgba(0,0,0,0.15); border-radius: 6px;">
+              <strong>To Group:</strong> ${escapeHTML(qItem.client.whatsapp_group || qItem.client.name + " (Direct Chat)")}<br>
+              <strong>Message:</strong> "${escapeHTML(msgText)}"
+            </p>
+            <div style="display:flex; gap:8px">
+              <button class="btn btn-blue" onclick="dispatchNextQueueItem()">💬 Dispatch & Open Link</button>
+              <button class="btn btn-ghost" onclick="cancelQueue()">Cancel Bulk Dispatch</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+  }
+
+  // Check if select-all is checked
+  const allPageChecked = filtered.length > 0 && filtered.every(item => selectedFollowupKeys.includes(item.client_id + "_" + item.category));
+
+  // Table rows
+  let tableRows = "";
+  if (filtered.length === 0) {
+    tableRows = `<tr><td colspan="7" style="text-align:center; padding:30px; color:var(--text3)">No active follow-ups found.</td></tr>`;
+  } else {
+    filtered.forEach(item => {
+      const key = item.client_id + "_" + item.category;
+      const isChecked = selectedFollowupKeys.includes(key);
+
+      let stageBadge = "";
+      let actionButtons = "";
+
+      if (item.stage === "whatsapp") {
+        stageBadge = `<span class="badge" style="background:var(--blue-dk);color:#fff;font-size:10px;padding:4px 8px;border-radius:6px">💬 WhatsApp (${item.wa_count}/3)</span>`;
+        actionButtons = `
+          <button class="btn btn-blue" style="padding:4px 8px;font-size:11px" onclick="sendSingleWhatsAppFollowup('${item.client_id}','${item.category}')">💬 Send WA</button>
+          <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="sendGroupWhatsAppFollowup('${item.client_id}','${item.category}')">👥 Group Msg</button>
+        `;
+      } else if (item.stage === "direct_call") {
+        stageBadge = `<span class="badge" style="background:var(--amber-lt);color:var(--amber);border:1px solid rgba(245,158,11,0.2);font-size:10px;padding:4px 8px;border-radius:6px">📞 Call Escalation</span>`;
+        actionButtons = `
+          <button class="btn btn-amber" style="padding:4px 8px;font-size:11px" onclick="logFollowupDirectCall('${item.client_id}','${item.category}')">📞 Log Call</button>
+          <button class="btn btn-blue" style="padding:4px 8px;font-size:11px" onclick="sendSingleWhatsAppFollowup('${item.client_id}','${item.category}')">💬 Send WA</button>
+        `;
+      } else if (item.stage === "manager_call") {
+        stageBadge = `<span class="badge" style="background:var(--red-lt);color:var(--red);border:1px solid rgba(239,68,68,0.2);font-size:10px;padding:4px 8px;border-radius:6px">🚨 Manager Call</span>`;
+        actionButtons = `
+          <button class="btn btn-red" style="padding:4px 8px;font-size:11px" onclick="logFollowupManagerCall('${item.client_id}','${item.category}')">🚨 Log Mgr Call</button>
+        `;
+      }
+
+      actionButtons += `
+        <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="resolveFollowupItem('${item.client_id}','${item.category}')">✓ Resolve</button>
+      `;
+
+      let groupCell = "—";
+      if (item.client.whatsapp_group) {
+        let displayGroup = item.client.whatsapp_group.length > 30 ? item.client.whatsapp_group.slice(0, 27) + "..." : item.client.whatsapp_group;
+        groupCell = `<a href="${escapeHTML(item.client.whatsapp_group)}" target="_blank" style="color:var(--blue);font-weight:600;text-decoration:none" onclick="event.stopPropagation()">${escapeHTML(displayGroup)} ↗</a>`;
+      }
+
+      tableRows += `
+        <tr class="dr" onclick="switchTab('client-profile','${item.client_id}')">
+          <td style="text-align:center;width:30px" onclick="event.stopPropagation()">
+            <input type="checkbox" class="row-chk" ${isChecked ? "checked" : ""} onchange="toggleSelectFollowup('${key}', this.checked)">
+          </td>
+          <td>
+            <div style="font-weight:700;color:var(--text)">${escapeHTML(item.client.name)}</div>
+            <div style="font-size:10px;color:var(--text3)">${escapeHTML(item.client.phone || "No Phone")}</div>
+          </td>
+          <td><span style="background:var(--bg3);padding:4px 6px;border-radius:4px;font-size:11px;font-weight:500;color:var(--text2)">${item.categoryLabel}</span></td>
+          <td>${item.period}</td>
+          <td>${groupCell}</td>
+          <td>${stageBadge}</td>
+          <td onclick="event.stopPropagation()">
+            <div style="display:flex;gap:6px">${actionButtons}</div>
+          </td>
+        </tr>
+      `;
+    });
+  }
+
+  // HTML Structure
+  el.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;margin-bottom:20px">
+      <div class="stat-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px;display:flex;flex-direction:column;gap:4px">
+        <span style="font-size:28px;font-weight:800;color:var(--text)" id="wa-stat-total">${totalActiveCount}</span>
+        <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;font-weight:600">Active Follow-ups</span>
+      </div>
+      <div class="stat-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px;display:flex;flex-direction:column;gap:4px;border-left:4px solid var(--blue)">
+        <span style="font-size:28px;font-weight:800;color:var(--blue)" id="wa-stat-wa">${waStageCount}</span>
+        <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;font-weight:600">WhatsApp Stage</span>
+      </div>
+      <div class="stat-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px;display:flex;flex-direction:column;gap:4px;border-left:4px solid var(--amber)">
+        <span style="font-size:28px;font-weight:800;color:var(--amber)" id="wa-stat-call">${callStageCount}</span>
+        <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;font-weight:600">Direct Call Stage</span>
+      </div>
+      <div class="stat-card" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:16px;display:flex;flex-direction:column;gap:4px;border-left:4px solid var(--red)">
+        <span style="font-size:28px;font-weight:800;color:var(--red)" id="wa-stat-mgr">${mgrStageCount}</span>
+        <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:0.05em;font-weight:600">Manager Escalation</span>
+      </div>
+    </div>
+
+    ${queuePanelHtml}
+
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--rl);padding:20px">
+      <div class="toolbar" style="display:flex;gap:10px;margin-bottom:16px;align-items:center;flex-wrap:wrap">
+        <select id="wa-filter-cat" class="sel" onchange="filterCategory=this.value;renderFollowUps()">
+          <option value="all" ${filterCategory==="all"?"selected":""}>All Categories</option>
+          <option value="data_collection" ${filterCategory==="data_collection"?"selected":""}>Data Collection (G1)</option>
+          <option value="approval" ${filterCategory==="approval"?"selected":""}>Report Approval (G1)</option>
+          <option value="payment" ${filterCategory==="payment"?"selected":""}>Payment Followup</option>
+        </select>
+        <select id="wa-filter-stage" class="sel" onchange="filterStage=this.value;renderFollowUps()">
+          <option value="all" ${filterStage==="all"?"selected":""}>All Stages</option>
+          <option value="whatsapp" ${filterStage==="whatsapp"?"selected":""}>WhatsApp Stage</option>
+          <option value="direct_call" ${filterStage==="direct_call"?"selected":""}>Direct Call</option>
+          <option value="manager_call" ${filterStage==="manager_call"?"selected":""}>Manager Call</option>
+        </select>
+        
+        <button class="btn btn-blue" style="margin-left:auto" onclick="startBulkFollowupDispatch()">💬 Send Message to Selected Groups (${selectedFollowupKeys.length})</button>
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:30px;text-align:center"><input type="checkbox" onclick="toggleSelectAllFollowups(this)" ${allPageChecked?"checked":""}></th>
+              <th>Client</th>
+              <th>Category</th>
+              <th>Period</th>
+              <th>WhatsApp Group</th>
+              <th>Escalation Stage</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRows}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function toggleSelectFollowup(key, checked) {
+  if (checked) {
+    if (!selectedFollowupKeys.includes(key)) selectedFollowupKeys.push(key);
+  } else {
+    selectedFollowupKeys = selectedFollowupKeys.filter(x => x !== key);
+  }
+  renderFollowUps();
+}
+
+function toggleSelectAllFollowups(master) {
+  const activeList = getActiveFollowups();
+  let filtered = activeList;
+  if (filterCategory !== "all") filtered = filtered.filter(x => x.category === filterCategory);
+  if (filterStage !== "all") filtered = filtered.filter(x => x.stage === filterStage);
+
+  if (master.checked) {
+    filtered.forEach(item => {
+      const key = item.client_id + "_" + item.category;
+      if (!selectedFollowupKeys.includes(key)) selectedFollowupKeys.push(key);
+    });
+  } else {
+    filtered.forEach(item => {
+      const key = item.client_id + "_" + item.category;
+      selectedFollowupKeys = selectedFollowupKeys.filter(x => x !== key);
+    });
+  }
+  renderFollowUps();
+}
+
+function startBulkFollowupDispatch() {
+  const activeList = getActiveFollowups();
+  activeQueue = activeList.filter(item => selectedFollowupKeys.includes(item.client_id + "_" + item.category));
+  
+  if (activeQueue.length === 0) {
+    showToast("⚠️", "No active follow-ups selected!");
+    return;
+  }
+  queueIndex = 0;
+  renderFollowUps();
+}
+
+async function dispatchNextQueueItem() {
+  if (queueIndex >= activeQueue.length) return;
+  const item = activeQueue[queueIndex];
+
+  item.wa_count++;
+  if (item.wa_count >= 3 && item.stage === "whatsapp") {
+    item.stage = "direct_call";
+  }
+  
+  await saveFollowupToDB(item);
+
+  const msgText = getFollowupMessageText(item);
+  navigator.clipboard.writeText(msgText).then(() => {
+    showToast("📋", `Message copied! Redirecting to group chat.`);
+    const groupLink = item.client.whatsapp_group || `https://wa.me/${(item.client.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`;
+    window.open(groupLink, "_blank");
+
+    queueIndex++;
+    renderFollowUps();
+  });
+}
+
+function cancelQueue() {
+  activeQueue = [];
+  queueIndex = 0;
+  renderFollowUps();
+  showToast("ℹ️", "Bulk dispatch canceled.");
+}
+
+async function sendSingleWhatsAppFollowup(cid, category) {
+  const c = clients.find(x => x.id === cid);
+  if (!c) return;
+
+  let f = followups.find(x => x.client_id === cid && x.category === category);
+  if (!f) {
+    f = { client_id: cid, category, wa_count: 0, stage: "whatsapp", notes: "" };
+  }
+  f.wa_count++;
+  if (f.wa_count >= 3 && f.stage === "whatsapp") {
+    f.stage = "direct_call";
+  }
+
+  await saveFollowupToDB(f);
+
+  const mockItem = { client: c, category, period: CUR };
+  const msgText = getFollowupMessageText(mockItem);
+  const waLink = `https://wa.me/${(c.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`;
+  
+  window.open(waLink, "_blank");
+  renderFollowUps();
+  showToast("💬", `WhatsApp opened for ${c.name}!`);
+}
+
+async function sendGroupWhatsAppFollowup(cid, category) {
+  const c = clients.find(x => x.id === cid);
+  if (!c) return;
+
+  if (!c.whatsapp_group) {
+    showToast("⚠️", "No WhatsApp group tagged for this client!");
+    return;
+  }
+
+  let f = followups.find(x => x.client_id === cid && x.category === category);
+  if (!f) {
+    f = { client_id: cid, category, wa_count: 0, stage: "whatsapp", notes: "" };
+  }
+  f.wa_count++;
+  if (f.wa_count >= 3 && f.stage === "whatsapp") {
+    f.stage = "direct_call";
+  }
+
+  await saveFollowupToDB(f);
+
+  const mockItem = { client: c, category, period: CUR };
+  const msgText = getFollowupMessageText(mockItem);
+  
+  navigator.clipboard.writeText(msgText).then(() => {
+    window.open(c.whatsapp_group, "_blank");
+    renderFollowUps();
+    showToast("📋", "Copied group template and opened Group link!");
+  });
+}
+
+async function logFollowupDirectCall(cid, category) {
+  let f = followups.find(x => x.client_id === cid && x.category === category);
+  if (f) {
+    f.stage = "manager_call";
+    await saveFollowupToDB(f);
+    renderFollowUps();
+    showToast("📞", "Direct Call logged. Escalated to Manager Call!");
+  }
+}
+
+async function logFollowupManagerCall(cid, category) {
+  let f = followups.find(x => x.client_id === cid && x.category === category);
+  if (f) {
+    f.stage = "resolved";
+    await saveFollowupToDB(f);
+    renderFollowUps();
+    showToast("🚨", "Manager Call logged. Marked as resolved!");
+  }
+}
+
+async function resolveFollowupItem(cid, category) {
+  let f = followups.find(x => x.client_id === cid && x.category === category);
+  if (!f) {
+    f = { client_id: cid, category, wa_count: 0, stage: "resolved", notes: "" };
+  } else {
+    f.stage = "resolved";
+  }
+  await saveFollowupToDB(f);
+  renderFollowUps();
+  showToast("✓", "Follow-up marked as resolved!");
+}
+
 // ═══════════════════════════════════════════════════════════════
 //  STAGE VIEW
 // ═══════════════════════════════════════════════════════════════
@@ -3401,6 +3910,8 @@ function initSettingsPanel() {
     renderStatusesConfig();
   } else if (currentSettingsTab === "steps") {
     renderStepsConfig();
+  } else if (currentSettingsTab === "templates") {
+    renderTemplatesConfig();
   }
 }
 
@@ -3409,10 +3920,12 @@ function switchSettingsTab(tab) {
   document.getElementById("stab-gen").classList.toggle("active", tab === "general");
   document.getElementById("stab-status").classList.toggle("active", tab === "statuses");
   document.getElementById("stab-steps").classList.toggle("active", tab === "steps");
+  document.getElementById("stab-templates").classList.toggle("active", tab === "templates");
   
   document.getElementById("scontent-general").classList.toggle("active", tab === "general");
   document.getElementById("scontent-statuses").classList.toggle("active", tab === "statuses");
   document.getElementById("scontent-steps").classList.toggle("active", tab === "steps");
+  document.getElementById("scontent-templates").classList.toggle("active", tab === "templates");
   
   if (tab === "general") {
     initSettingsPanel();
@@ -3420,7 +3933,25 @@ function switchSettingsTab(tab) {
     renderStatusesConfig();
   } else if (tab === "steps") {
     renderStepsConfig();
+  } else if (tab === "templates") {
+    renderTemplatesConfig();
   }
+}
+
+function renderTemplatesConfig() {
+  const d = document.getElementById("temp-editor-data");
+  const a = document.getElementById("temp-editor-approval");
+  const p = document.getElementById("temp-editor-payment");
+  if (d) d.value = CONFIG.templates.data_collection || "";
+  if (a) a.value = CONFIG.templates.approval || "";
+  if (p) p.value = CONFIG.templates.payment || "";
+}
+
+async function saveTemplateConfig(key, val) {
+  if (!CONFIG.templates) CONFIG.templates = {};
+  CONFIG.templates[key] = val;
+  await saveConfig();
+  if (curTab === "whatsapp") renderFollowUps();
 }
 
 function renderStatusesConfig() {
@@ -3680,6 +4211,10 @@ function renderClientProfile(cid) {
         <input type="tel" id="ws-c-phone" class="inp" value="${escapeHTML(c.phone || '')}" placeholder="+91 99999 99999" style="width:100%">
       </div>
       <div class="ws-form-group">
+        <label class="ws-lbl">WhatsApp Group Link / ID</label>
+        <input type="text" id="ws-c-whatsapp-group" class="inp" value="${escapeHTML(c.whatsapp_group || '')}" placeholder="e.g. https://chat.whatsapp.com/..." style="width:100%">
+      </div>
+      <div class="ws-form-group">
         <label class="ws-lbl">Portal Username</label>
         <input type="text" id="ws-c-username" class="inp" value="${escapeHTML(c.portal_username || '')}" placeholder="GST Portal Username" style="width:100%">
       </div>
@@ -3825,6 +4360,7 @@ async function saveWorkspaceClient(cid) {
   c.portal_username = document.getElementById("ws-c-username")?.value.trim() || "";
   c.portal_password = document.getElementById("ws-c-password")?.value.trim() || "";
   c.notes = document.getElementById("ws-c-notes")?.value.trim() || "";
+  c.whatsapp_group = document.getElementById("ws-c-whatsapp-group")?.value.trim() || "";
   
   showToast("⏳", "Saving client profile…");
   
@@ -3840,7 +4376,8 @@ async function saveWorkspaceClient(cid) {
         phone: c.phone,
         portal_username: c.portal_username,
         portal_password: c.portal_password,
-        notes: c.notes
+        notes: c.notes,
+        whatsapp_group: c.whatsapp_group
       });
       setSyncStatus("live");
     } catch(e) {
