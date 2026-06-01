@@ -672,44 +672,25 @@ tr.dr.expanded td{background:rgba(59,130,246,.05)}
   transition: all 0.15s ease;
   border: 1px solid transparent;
 }
-/* 4-State Segmented Status Control */
-.stage-seg {
-  display: flex;
-  border-radius: 6px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  flex-shrink: 0;
+.stage-toggle-btn.done {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border-color: rgba(34, 197, 94, 0.3);
 }
-.seg-opt {
-  font-size: 10px;
-  padding: 4px 8px;
-  border: none;
-  border-right: 1px solid var(--border);
-  background: var(--bg2);
+.stage-toggle-btn.done:hover {
+  background: rgba(34, 197, 94, 0.25);
+  border-color: rgba(34, 197, 94, 0.5);
+}
+.stage-toggle-btn.pending {
+  background: rgba(148, 163, 184, 0.1);
   color: var(--text3);
-  cursor: pointer;
-  font-family: var(--font);
-  font-weight: 500;
-  white-space: nowrap;
-  transition: all 0.1s;
+  border-color: var(--border);
 }
-.seg-opt:last-child { border-right: none; }
-.seg-opt:hover { background: var(--surface); color: var(--text); }
-.seg-opt.seg-ns  { background: rgba(74,90,122,0.25); color: var(--text2); font-weight:600; }
-.seg-opt.seg-wk  { background: rgba(59,130,246,0.15); color: #3b82f6; font-weight:600; }
-.seg-opt.seg-pc  { background: rgba(251,191,36,0.15); color: #fbbf24; font-weight:600; }
-.seg-opt.seg-ok  { background: rgba(34,197,94,0.15);  color: #22c55e; font-weight:700; }
-/* Track box header status legend */
-.track-hdr-legend {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  font-size: 10px;
-  color: var(--text3);
-  margin-top: 4px;
-  flex-wrap: wrap;
+.stage-toggle-btn.pending:hover {
+  background: rgba(148, 163, 184, 0.2);
+  color: var(--text);
+  border-color: var(--text3);
 }
-.leg-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .locked-msg{
   font-size:11px;color:var(--amber);
   background:var(--amber-lt);border-radius:var(--r);
@@ -3006,24 +2987,30 @@ function openClientModal(cid, pid) {
     tl += `</div>`;
 
     const g1rows = CONFIG.g1Steps.map((step, i) => {
-      const s = f.g1.statuses[step.id] || "PENDING";
+      const s = f.g1.statuses[step.id] || CONFIG.statuses[0].name;
       return `
         <div class="stage-item">
           <div class="snum" style="background:${stColor(s)}">${i+1}</div>
           <div class="slbl" title="${escapeHTML(step.label)}">${escapeHTML(step.label)}</div>
-          ${stageSegCtrl(cid, fpid, 'g1', step.id, s, false)}
+          <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${cid}','${fpid}','g1','${step.id}','${s}',false)">
+            ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+          </button>
         </div>`;
     }).join("");
 
-    const g3rows = CONFIG.g3Steps.map((step, i) => {
-      const s = f.g3.statuses[step.id] || "PENDING";
-      return `
-        <div class="stage-item">
-          <div class="snum" style="background:${stColor(s)}">${i+1}</div>
-          <div class="slbl" title="${escapeHTML(step.label)}">${escapeHTML(step.label)}</div>
-          ${stageSegCtrl(cid, fpid, 'g3', step.id, s, false)}
-        </div>`;
-    }).join("");
+    const g3rows = g1done
+      ? CONFIG.g3Steps.map((step, i) => {
+          const s = f.g3.statuses[step.id] || CONFIG.statuses[0].name;
+          return `
+            <div class="stage-item">
+              <div class="snum" style="background:${stColor(s)}">${i+1}</div>
+              <div class="slbl" title="${escapeHTML(step.label)}">${escapeHTML(step.label)}</div>
+              <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${cid}','${fpid}','g3','${step.id}','${s}',false)">
+                ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+              </button>
+            </div>`;
+        }).join("")
+      : `<div class="locked-msg">🔒 Complete GSTR-1 first to unlock GSTR-3B</div>`;
 
     trackHtml = `
     <div style="margin-bottom:14px">
@@ -3057,18 +3044,13 @@ function openClientModal(cid, pid) {
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 
-/* Helper: render a 4-state segmented control for a stage row */
-function stageSegCtrl(cid, pid, track, stepId, curStatus, isProg) {
-  const fn = isProg ? 'updStageProg' : 'updStage';
-  const opts = [
-    { val: 'PENDING',             label: '○ Not Started', cls: curStatus === 'PENDING'             ? 'seg-ns' : '' },
-    { val: 'WORKING',             label: '◉ Working',     cls: curStatus === 'WORKING'             ? 'seg-wk' : '' },
-    { val: 'PENDING FROM CLIENT', label: '👤 Client',     cls: curStatus === 'PENDING FROM CLIENT' ? 'seg-pc' : '' },
-    { val: 'FILED',               label: '✓ Filed',       cls: curStatus === 'FILED'               ? 'seg-ok' : '' },
-  ];
-  return `<div class="stage-seg">${opts.map(o =>
-    `<button class="seg-opt ${o.cls}" onclick="event.stopPropagation();${fn}('${cid}','${pid}','${track}','${stepId}','${o.val}')">${o.label}</button>`
-  ).join('')}</div>`;
+async function toggleStageBtn(cid, pid, track, stepId, curVal, isProg = false) {
+  const newVal = (curVal === "FILED") ? "PENDING" : "FILED";
+  if (isProg) {
+    await updStageProg(cid, pid, track, stepId, newVal);
+  } else {
+    await updStage(cid, pid, track, stepId, newVal);
+  }
 }
 
 async function updStage(cid, pid, track, stepId, val) {
@@ -3076,7 +3058,20 @@ async function updStage(cid, pid, track, stepId, val) {
   const f = getOrInitFiling(c, pid);
   if (!f) return;
   f[track].statuses[stepId] = val;
-  // GSTR-1 and GSTR-3B are now independent — no auto-locking
+  
+  const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+  if (g1done) {
+    CONFIG.g3Steps.forEach(step => {
+      if (f.g3.statuses[step.id] === "PENDING PREVIOUS PERIOD FILING") {
+        f.g3.statuses[step.id] = CONFIG.statuses[0].name;
+      }
+    });
+  } else {
+    CONFIG.g3Steps.forEach(step => {
+      f.g3.statuses[step.id] = "PENDING PREVIOUS PERIOD FILING";
+    });
+  }
+  
   openClientModal(cid, pid);
   renderCurrentTab();
   updateArrBadge();
@@ -3220,45 +3215,37 @@ function renderProgress() {
 }
 
 function buildSpvDetail(c, fp, f) {
-  const g1Filed = Object.values(f.g1.statuses).filter(s => s === "FILED").length;
-  const g3Filed = Object.values(f.g3.statuses).filter(s => s === "FILED").length;
+  const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
   
   const g1rows = CONFIG.g1Steps.map((step, i) => {
-    const s = f.g1.statuses[step.id] || "PENDING";
+    const s = f.g1.statuses[step.id] || CONFIG.statuses[0].name;
     return `
       <div class="stage-item">
         <div class="snum" style="background:${stColor(s)}">${i+1}</div>
         <div class="slbl" style="font-size:11px">${escapeHTML(step.label)}</div>
-        ${stageSegCtrl(c.id, fp, 'g1', step.id, s, true)}
+        <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${c.id}','${fp}','g1','${step.id}','${s}',true)">
+          ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+        </button>
       </div>`;
   }).join("");
   
-  const g3rows = CONFIG.g3Steps.map((step, i) => {
-    const s = f.g3.statuses[step.id] || "PENDING";
-    return `
-      <div class="stage-item">
-        <div class="snum" style="background:${stColor(s)}">${i+1}</div>
-        <div class="slbl" style="font-size:11px">${escapeHTML(step.label)}</div>
-        ${stageSegCtrl(c.id, fp, 'g3', step.id, s, true)}
-      </div>`;
-  }).join("");
-
-  const legend = `<div class="track-hdr-legend">
-    <span class="leg-dot" style="background:#4a5a7a"></span>Not Started
-    <span class="leg-dot" style="background:#3b82f6"></span>Working
-    <span class="leg-dot" style="background:#fbbf24"></span>Pending from Client
-    <span class="leg-dot" style="background:#22c55e"></span>Filed
-  </div>`;
+  const g3rows = g1done 
+    ? CONFIG.g3Steps.map((step, i) => {
+        const s = f.g3.statuses[step.id] || CONFIG.statuses[0].name;
+        return `
+          <div class="stage-item">
+            <div class="snum" style="background:${stColor(s)}">${i+1}</div>
+            <div class="slbl" style="font-size:11px">${escapeHTML(step.label)}</div>
+            <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${c.id}','${fp}','g3','${step.id}','${s}',true)">
+              ${s === 'FILED' ? '✓ Done' : 'Not Done'}
+            </button>
+          </div>`;
+      }).join("")
+    : `<div class="locked-msg">🔒 Complete GSTR-1 first to unlock GSTR-3B</div>`;
     
   return `<div class="track-grid">
-    <div class="track-box">
-      <div class="track-hdr g1-hdr"><span>📄 GSTR-1 Stages</span><span class="track-prog">${g1Filed}/${CONFIG.g1Steps.length} Filed</span></div>
-      ${legend}${g1rows}
-    </div>
-    <div class="track-box">
-      <div class="track-hdr g3-hdr"><span>📋 GSTR-3B Stages</span><span class="track-prog">${g3Filed}/${CONFIG.g3Steps.length} Filed</span></div>
-      ${legend}${g3rows}
-    </div>
+    <div class="track-box"><div class="track-hdr g1-hdr"><span>📄 GSTR-1 Stages</span><span class="track-prog">${Object.values(f.g1.statuses).filter(s=>s==="FILED").length}/${CONFIG.g1Steps.length}</span></div>${g1rows}</div>
+    <div class="track-box"><div class="track-hdr ${g1done?'g3-hdr':'locked-hdr'}"><span>${g1done?'📋':'🔒'} GSTR-3B Stages</span><span class="track-prog">${g1done?Object.values(f.g3.statuses).filter(s=>s==="FILED").length+"/"+CONFIG.g3Steps.length:'Locked'}</span></div>${g3rows}</div>
   </div>`;
 }
 
@@ -3272,7 +3259,20 @@ async function updStageProg(cid, pid, track, stepId, val) {
   const f = getOrInitFiling(c, pid);
   if (!f) return;
   f[track].statuses[stepId] = val;
-  // GSTR-1 and GSTR-3B are now independent — no auto-locking
+  
+  const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+  if (g1done) {
+    CONFIG.g3Steps.forEach(step => {
+      if (f.g3.statuses[step.id] === "PENDING PREVIOUS PERIOD FILING") {
+        f.g3.statuses[step.id] = CONFIG.statuses[0].name;
+      }
+    });
+  } else {
+    CONFIG.g3Steps.forEach(step => {
+      f.g3.statuses[step.id] = "PENDING PREVIOUS PERIOD FILING";
+    });
+  }
+  
   renderProgress();
   updateArrBadge();
   await saveStage(cid, pid, track, val);
