@@ -2090,6 +2090,15 @@ function renderPeriodBar() {
 
 function setDashPeriod(pid) {
   CUR = pid;
+  
+  // Sync all dropdowns in DOM
+  const clPer = document.getElementById("cl-per");
+  if (clPer) clPer.value = pid;
+  const spPer = document.getElementById("sp-per");
+  if (spPer) spPer.value = pid;
+  const stgPer = document.getElementById("stg-per");
+  if (stgPer) stgPer.value = pid;
+  
   renderPeriodBar();
   renderCurrentTab();
   updateArrBadge();
@@ -2434,7 +2443,7 @@ function renderClients() {
   document.getElementById("tab-clients").innerHTML = `
   <div class="toolbar">
     <div class="search-wrap"><span class="search-icon">🔍</span><input id="cl-q" class="search-inp" type="text" placeholder="Search client, email, phone, GSTIN…" oninput="pg=1;renderClients()" value="${escapeHTML(qValue)}"></div>
-    <select id="cl-per" class="sel" onchange="pg=1;renderClients()">${pOpts}</select>
+    <select id="cl-per" class="sel" onchange="CUR=this.value;renderPeriodBar();pg=1;renderClients()">${pOpts}</select>
     <select id="cl-st" class="sel" onchange="pg=1;renderClients()">
       <option value="">All statuses</option>
       <option value="done">✓ Filed</option>
@@ -2856,7 +2865,7 @@ function renderProgress() {
   document.getElementById("tab-progress").innerHTML = `
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
     <div class="search-wrap" style="max-width:200px"><span class="search-icon">🔍</span><input id="sp-q" class="search-inp" type="text" placeholder="Search client, GSTIN, contact..." oninput="pgProg=1;renderProgress()"></div>
-    <select id="sp-per" class="sel" onchange="pgProg=1;renderProgress()">${pOpts}</select>
+    <select id="sp-per" class="sel" onchange="CUR=this.value;renderPeriodBar();pgProg=1;renderProgress()">${pOpts}</select>
     <select id="sp-fr" class="sel" onchange="pgProg=1;renderProgress()"><option value="">All types</option><option value="M">Monthly</option><option value="Q">Quarterly</option></select>
     <select id="sp-st" class="sel" onchange="pgProg=1;renderProgress()"><option value="">All statuses</option><option value="done">✓ Filed</option><option value="inprog">In progress</option><option value="stuck">⚠ Stuck</option><option value="locked">🔒 Locked</option></select>
     <select id="sp-sort" class="sel" onchange="renderProgress()"><option value="name">Sort: Name</option><option value="status">Sort: Status (stuck first)</option><option value="progress">Sort: Progress</option></select>
@@ -3042,7 +3051,7 @@ function renderStages() {
   
   document.getElementById("tab-stages").innerHTML = `
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-    <select id="stg-per" class="sel" onchange="renderStages()">${pOpts}</select>
+    <select id="stg-per" class="sel" onchange="CUR=this.value;renderPeriodBar();renderStages()">${pOpts}</select>
     <span style="font-size:11px;color:var(--text3)">Click a client name inside any card to open their update panel</span>
   </div>
   <div class="sec-h">📄 GSTR-1 Stages</div>
