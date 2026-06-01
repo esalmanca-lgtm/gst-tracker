@@ -1838,8 +1838,95 @@ function overallSt(f) {
   if (g3 === "locked") return "locked";
   return "inprog";
 }
+function getDueDate(periodId, type) {
+  const monthMap = {
+    "Jan": 0, "Feb": 1, "Mar": 2, "Apr": 3, "May": 4, "Jun": 5,
+    "Jul": 6, "Aug": 7, "Sep": 8, "Oct": 9, "Nov": 10, "Dec": 11
+  };
+  const day = (type === "g1") ? 11 : 20;
+
+  if (periodId.startsWith("Q")) {
+    const parts = periodId.split("-");
+    const q = parts[0];
+    const fy = parts[1];
+    if (!fy) return null;
+    const startYearPart = fy.substring(2, 4);
+    const endYearPart = fy.substring(4, 6);
+    let year = 2000 + parseInt(startYearPart);
+    let month;
+    if (q === "Q1") {
+      month = 6; // July
+    } else if (q === "Q2") {
+      month = 9; // October
+    } else if (q === "Q3") {
+      month = 0; // January
+      year = 2000 + parseInt(endYearPart);
+    } else if (q === "Q4") {
+      month = 3; // April
+      year = 2000 + parseInt(endYearPart);
+    } else {
+      month = 0;
+    }
+    return new Date(year, month, day, 23, 59, 59);
+  } else {
+    const parts = periodId.split("-");
+    const mStr = parts[0];
+    const yStr = parts[1];
+    const mIdx = monthMap[mStr];
+    const yVal = parseInt(yStr);
+    if (mIdx !== undefined && !isNaN(yVal)) {
+      let targetMonth = mIdx + 1;
+      let targetYear = yVal;
+      if (targetMonth > 11) {
+        targetMonth = 0;
+        targetYear += 1;
+      }
+      return new Date(targetYear, targetMonth, day, 23, 59, 59);
+    }
+  }
+  return null;
+}
+
+function isG1Arrear(c, pid, now = new Date()) {
+  const p = PERIODS.find(x => x.id === pid);
+  if (!p) return false;
+  const applicable = applyPeriods(c.freq).some(x => x.id === pid);
+  if (!applicable) return false;
+  const f = c.filings[pid];
+  const filed = f && g1St(f) === "done";
+  if (filed) return false;
+  const dueDate = getDueDate(pid, "g1");
+  if (!dueDate) return false;
+  return now > dueDate;
+}
+
+function isG3Arrear(c, pid, now = new Date()) {
+  const p = PERIODS.find(x => x.id === pid);
+  if (!p) return false;
+  const applicable = applyPeriods(c.freq).some(x => x.id === pid);
+  if (!applicable) return false;
+  const f = c.filings[pid];
+  const filed = f && g3St(f) === "done";
+  if (filed) return false;
+  const dueDate = getDueDate(pid, "g3");
+  if (!dueDate) return false;
+  return now > dueDate;
+}
+
+function g1ArrearPeriods(c, now = new Date()) {
+  return applyPeriods(c.freq).filter(p => isG1Arrear(c, p.id, now));
+}
+
+function g3ArrearPeriods(c, now = new Date()) {
+  return applyPeriods(c.freq).filter(p => isG3Arrear(c, p.id, now));
+}
+
+function allArrearPeriods(c, now = new Date()) {
+  return applyPeriods(c.freq).filter(p => isG1Arrear(c, p.id, now) || isG3Arrear(c, p.id, now));
+}
+
 function pendingPeriods(c) {
-  return applyPeriods(c.freq).filter(p => p.id !== CUR && c.filings[p.id] && overallSt(c.filings[p.id]) !== "done");
+  return allArrearPeriods(c);
 }
 function stagesDone(f) {
   if (!f) return 0;
@@ -2528,14 +2615,19 @@ function renderDash() {
       </div>
       <div class="alert-list">
         ${arrAll.slice(0,5).map(c=>{
-          const pp=pendingPeriods(c);
-          return `<div class="alert-row" onclick="openClientModal('${c.id}','${pp[0]?.id||CUR}')">
+          const now = new Date();
+          const g1arr = g1ArrearPeriods(c, now).map(p => `${p.label} (G1)`);
+          const g3arr = g3ArrearPeriods(c, now).map(p => `${p.label} (3B)`);
+          const text = [...g1arr, ...g3arr].join(" · ");
+          const totalArrs = g1arr.length + g3arr.length;
+          const firstPeriodId = g1ArrearPeriods(c, now)[0]?.id || g3ArrearPeriods(c, now)[0]?.id || CUR;
+          return `<div class="alert-row" onclick="openClientModal('${c.id}','${firstPeriodId}')">
             <div class="alert-icon" style="background:var(--amber-lt)">📅</div>
             <div class="alert-body">
               <div class="alert-name">${c.name}</div>
-              <div class="alert-sub">${pp.map(p=>p.label).join(" · ")}</div>
+              <div class="alert-sub">${text}</div>
             </div>
-            <span class="alert-badge" style="background:var(--amber-lt);color:var(--amber)">${pp.length} period${pp.length>1?"s":""}</span>
+            <span class="alert-badge" style="background:var(--amber-lt);color:var(--amber)">${totalArrs} arrear${totalArrs>1?"s":""}</span>
             <span class="alert-arr">→</span>
           </div>`;
         }).join("")}
@@ -2616,7 +2708,11 @@ function renderClients() {
   let fcSorted = [...fc];
   fcSorted.sort((a, b) => {
     if (sortVal === "rent") return (b.rent_amount || 0) - (a.rent_amount || 0);
-    if (sortVal === "arrears") return pendingPeriods(b).length - pendingPeriods(a).length;
+    if (sortVal === "arrears") {
+      const aCount = g1ArrearPeriods(a).length + g3ArrearPeriods(a).length;
+      const bCount = g1ArrearPeriods(b).length + g3ArrearPeriods(b).length;
+      return bCount - aCount;
+    }
     if (sortVal === "progress") {
       const fa = getOrInitFiling(a, fp);
       const fb = getOrInitFiling(b, fp);
@@ -2641,6 +2737,7 @@ function renderClients() {
     const g3s = f ? g3St(f) : "pending";
     const ost = f ? overallSt(f) : "pending";
     const pp = pendingPeriods(c);
+    const totalArrs = g1ArrearPeriods(c).length + g3ArrearPeriods(c).length;
     const progColor = ost==="done"?"#22c55e":ost==="stuck"?"#ef4444":ost==="locked"?"#f59e0b":"#3b82f6";
     const isChecked = selectedClientIds.includes(c.id);
     rows += `<tr class="dr" onclick="switchTab('client-profile','${c.id}')">
@@ -2653,7 +2750,7 @@ function renderClients() {
       <td>${f?badge(g1s,true):`<span style="font-size:11px;color:var(--text3)">N/A</span>`}</td>
       <td>${f?badge(g3s,true):`<span style="font-size:11px;color:var(--text3)">N/A</span>`}</td>
       <td style="min-width:90px">${miniBar(f||{g1:{statuses:{}},g3:{statuses:{}}},progColor)}</td>
-      <td>${pp.length?`<span class="arr-badge" onclick="event.stopPropagation();switchTab('arrears')">⚠ ${pp.length}</span>`:`<span style="font-size:11px;color:var(--text3)">—</span>`}</td>
+      <td>${totalArrs?`<span class="arr-badge" onclick="event.stopPropagation();switchTab('arrears')">⚠ ${totalArrs}</span>`:`<span style="font-size:11px;color:var(--text3)">—</span>`}</td>
     </tr>`;
   });
 
@@ -2858,7 +2955,11 @@ function toggleSelectAllClients(master) {
   let fcSorted = [...fc];
   fcSorted.sort((a, b) => {
     if (sortVal === "rent") return (b.rent_amount || 0) - (a.rent_amount || 0);
-    if (sortVal === "arrears") return pendingPeriods(b).length - pendingPeriods(a).length;
+    if (sortVal === "arrears") {
+      const aCount = g1ArrearPeriods(a).length + g3ArrearPeriods(a).length;
+      const bCount = g1ArrearPeriods(b).length + g3ArrearPeriods(b).length;
+      return bCount - aCount;
+    }
     if (sortVal === "progress") {
       const fa = getOrInitFiling(a, fp);
       const fb = getOrInitFiling(b, fp);
@@ -3120,6 +3221,7 @@ function renderProgress() {
     const f = getOrInitFiling(c, fp);
     const ost = overallSt(f);
     const pp = pendingPeriods(c);
+    const totalArrs = g1ArrearPeriods(c).length + g3ArrearPeriods(c).length;
     
     const g1c = Object.values(f.g1.statuses).filter(s => s === "FILED").length;
     const g1Total = CONFIG.g1Steps.length;
@@ -3178,7 +3280,7 @@ function renderProgress() {
         </div>
         
         <div style="display:flex;align-items:center;gap:6px;flex-shrink:0" onclick="event.stopPropagation()">
-          ${pp.length?`<span class="arr-badge" onclick="switchTab('arrears')">⚠ ${pp.length}</span>`:''}
+          ${totalArrs?`<span class="arr-badge" onclick="switchTab('arrears')">⚠ ${totalArrs}</span>`:''}
           ${badge(ost, true)}
         </div>
       </div>
@@ -3273,39 +3375,96 @@ async function updStageProg(cid, pid, track, stepId, val) {
 // ═══════════════════════════════════════════════════════════════
 //  ARREARS
 // ═══════════════════════════════════════════════════════════════
+function cellHtmlG1(c, p, now = new Date()) {
+  const applicable = applyPeriods(c.freq).some(x => x.id === p.id);
+  if (!applicable) return `<td class="cell-na">—</td>`;
+  const f = c.filings[p.id];
+  const st = f ? g1St(f) : "pending";
+  
+  if (st === "done") {
+    return `<td class="cell-done" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer">✓ Filed</td>`;
+  }
+  
+  const dueDate = getDueDate(p.id, "g1");
+  if (dueDate && now > dueDate) {
+    const lbl = { stuck: "⚠ Stuck", inprog: "◉ Working", pending: "○ Pending" }[st] || st;
+    const cellClass = `cell-${st}`;
+    return `<td class="${cellClass}" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer">${lbl}</td>`;
+  } else {
+    const lbl = { stuck: "Stuck", inprog: "Working", pending: "Pending" }[st] || st;
+    return `<td class="cell-pending" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer;opacity:0.6">${lbl} (Not due)</td>`;
+  }
+}
+
+function cellHtmlG3(c, p, now = new Date()) {
+  const applicable = applyPeriods(c.freq).some(x => x.id === p.id);
+  if (!applicable) return `<td class="cell-na">—</td>`;
+  const f = c.filings[p.id];
+  const st = f ? g3St(f) : "locked";
+  
+  if (st === "done") {
+    return `<td class="cell-done" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer">✓ Filed</td>`;
+  }
+  
+  const dueDate = getDueDate(p.id, "g3");
+  if (dueDate && now > dueDate) {
+    const lbl = { stuck: "⚠ Stuck", inprog: "◉ Working", pending: "○ Pending", locked: "🔒 Locked" }[st] || st;
+    const cellClass = `cell-${st}`;
+    return `<td class="${cellClass}" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer">${lbl}</td>`;
+  } else {
+    const lbl = { stuck: "Stuck", inprog: "Working", pending: "Pending", locked: "Locked" }[st] || st;
+    return `<td class="cell-pending" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer;opacity:0.6">${lbl} (Not due)</td>`;
+  }
+}
+
 function renderArrears() {
   const el = document.getElementById("tab-arrears");
-  const withArr = clients.filter(c => pendingPeriods(c).length > 0)
-    .sort((a, b) => pendingPeriods(b).length - pendingPeriods(a).length);
+  const now = new Date();
+  const withArr = clients.filter(c => g1ArrearPeriods(c, now).length > 0 || g3ArrearPeriods(c, now).length > 0)
+    .sort((a, b) => {
+      const totalA = g1ArrearPeriods(a, now).length + g3ArrearPeriods(a, now).length;
+      const totalB = g1ArrearPeriods(b, now).length + g3ArrearPeriods(b, now).length;
+      return totalB - totalA;
+    });
   updateArrBadge();
   if (!withArr.length) {
-    el.innerHTML = `<div class="empty-state" style="padding:40px">✅ No arrears — all previous periods are fully filed.</div>`;
+    el.innerHTML = `<div class="empty-state" style="padding:40px">✅ No arrears — all previous periods are fully filed or not yet past due dates.</div>`;
     return;
   }
   const past = PAST();
-  function cellHtml(c, p) {
-    const applicable = applyPeriods(c.freq).some(x => x.id === p.id);
-    if (!applicable) return `<td class="cell-na">—</td>`;
-    const f = c.filings[p.id];
-    const st = f ? overallSt(f) : "pending";
-    const lbl = { done: "✓ Filed", stuck: "⚠ Stuck", locked: "G1 pending", inprog: "In progress", pending: "Not started" }[st] || st;
-    return `<td class="cell-${st}" onclick="openClientModal('${c.id}','${p.id}')" style="cursor:pointer">${lbl}</td>`;
-  }
+  
   el.innerHTML = `
-  <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:500">${withArr.length} client(s) with pending previous periods — click any cell to update</div>
+  <div style="font-size:13px;color:var(--text2);margin-bottom:12px;font-weight:500">${withArr.length} client(s) with active GSTR-1 or GSTR-3B arrears — click any cell to update</div>
   <div class="arr-tbl-wrap">
     <table class="arr-tbl">
-      <thead><tr>
-        <th style="min-width:160px">Client</th><th>Freq</th>
-        ${past.map(p=>`<th>${p.label}${p.type==="Q"?" (Q)":""}</th>`).join("")}
-        <th>Pending</th>
-      </tr></thead>
-      <tbody>${withArr.map(c=>`<tr>
-        <td style="font-weight:600;cursor:pointer;color:var(--blue)" onclick="openClientModal('${c.id}','${CUR}')">${c.name}</td>
-        <td><span class="freq-${c.freq}">${c.freq}</span></td>
-        ${past.map(p=>cellHtml(c,p)).join("")}
-        <td><span class="arr-badge">${pendingPeriods(c).length}</span></td>
-      </tr>`).join("")}
+      <thead>
+        <tr>
+          <th rowspan="2" style="min-width:160px;vertical-align:middle">Client</th>
+          <th rowspan="2" style="width:60px;vertical-align:middle;text-align:center">Freq</th>
+          ${past.map(p => `<th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">${p.label}${p.type==="Q"?" (Q)":""}</th>`).join("")}
+          <th colspan="2" style="text-align:center;border-bottom:1px solid var(--border)">Arrears Count</th>
+        </tr>
+        <tr>
+          ${past.map(p => `<th style="text-align:center;font-size:10px;padding:4px;width:80px">G1</th><th style="text-align:center;font-size:10px;padding:4px;width:80px">3B</th>`).join("")}
+          <th style="text-align:center;font-size:10px;padding:4px;width:50px">G1</th>
+          <th style="text-align:center;font-size:10px;padding:4px;width:50px">3B</th>
+        </tr>
+      </thead>
+      <tbody>${withArr.map(c=>{
+        const g1Count = g1ArrearPeriods(c, now).length;
+        const g3Count = g3ArrearPeriods(c, now).length;
+        return `<tr>
+          <td style="font-weight:600;cursor:pointer;color:var(--blue)" onclick="openClientModal('${c.id}','${CUR}')">${escapeHTML(c.name)}</td>
+          <td style="text-align:center"><span class="freq-${c.freq}">${c.freq}</span></td>
+          ${past.map(p=>cellHtmlG1(c,p,now) + cellHtmlG3(c,p,now)).join("")}
+          <td style="text-align:center">
+            <span class="arr-badge" style="${g1Count > 0 ? '' : 'background:var(--bg3);color:var(--text3);border-color:var(--border)'}">${g1Count}</span>
+          </td>
+          <td style="text-align:center">
+            <span class="arr-badge" style="${g3Count > 0 ? '' : 'background:var(--bg3);color:var(--text3);border-color:var(--border)'}">${g3Count}</span>
+          </td>
+        </tr>`;
+      }).join("")}
       </tbody>
     </table>
   </div>`;
