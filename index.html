@@ -495,6 +495,10 @@ body{
   background:var(--blue);color:#fff;border-color:var(--blue);
 }
 .btn-blue:hover{background:var(--blue-dk)}
+.btn-red{
+  background:var(--red);color:#fff;border-color:var(--red);
+}
+.btn-red:hover{background:var(--red-dk)}
 .btn-ghost{
   background:transparent;color:var(--text2);
   border-color:var(--border);
@@ -1517,6 +1521,7 @@ let IS_DEMO = false;
 let CUR = "May-2025";
 let DASH_FREQ = "all";
 let clients = [];
+let selectedClientIds = [];
 let pg = 1, pgProg = 1;
 const PER = 15;
 let expandedId = null, expandedProgId = null;
@@ -2402,6 +2407,7 @@ function filteredClients(fpid) {
 }
 
 function renderClients() {
+  selectedClientIds = selectedClientIds.filter(id => clients.some(c => c.id === id));
   const fp = document.getElementById("cl-per")?.value || CUR;
   const fc = filteredClients(fp);
   
@@ -2438,6 +2444,8 @@ function renderClients() {
   const page = fcSorted.slice((pg - 1) * PER, pg * PER);
   const pOpts = PERIODS.map(p => `<option value="${p.id}"${p.id===fp?" selected":""}>${escapeHTML(p.label)}${p.type==="Q"?" (Q)":""}</option>`).join("");
 
+  const allPageChecked = page.length > 0 && page.every(c => selectedClientIds.includes(c.id));
+
   let rows = "";
   page.forEach((c, ri) => {
     const f = getOrInitFiling(c, fp);
@@ -2446,7 +2454,11 @@ function renderClients() {
     const ost = f ? overallSt(f) : "pending";
     const pp = pendingPeriods(c);
     const progColor = ost==="done"?"#22c55e":ost==="stuck"?"#ef4444":ost==="locked"?"#f59e0b":"#3b82f6";
+    const isChecked = selectedClientIds.includes(c.id);
     rows += `<tr class="dr" onclick="switchTab('client-profile','${c.id}')">
+      <td style="text-align:center;width:36px" onclick="event.stopPropagation()">
+        <input type="checkbox" class="client-chk" data-id="${c.id}" ${isChecked ? "checked" : ""} onchange="toggleSelectClient('${c.id}', this.checked)">
+      </td>
       <td style="color:var(--text3);font-size:11px">${(pg-1)*PER+ri+1}</td>
       <td><div class="cn">${escapeHTML(c.name)}</div><div class="gstin">${escapeHTML(c.gstin||"—")}</div></td>
       <td><span class="freq-${c.freq}">${c.freq==="M"?"Monthly":"Quarterly"}</span></td>
@@ -2491,6 +2503,7 @@ function renderClients() {
       <option value="rent" ${sortVal==='rent'?'selected':''}>Sort: Rent</option>
       <option value="arrears" ${sortVal==='arrears'?'selected':''}>Sort: Arrears</option>
     </select>
+    ${selectedClientIds.length > 0 ? `<button class="btn btn-red" onclick="bulkDeleteClients()">🗑 Delete Selected (${selectedClientIds.length})</button>` : ""}
     <button class="btn btn-blue" onclick="addClientDialog()">+ Add client</button>
     <button class="btn btn-ghost" onclick="downloadExcelTemplate()" title="Download Excel template">⬇ Template</button>
     <label class="btn btn-ghost" style="cursor:pointer" title="Upload Excel to bulk add clients">
@@ -2501,6 +2514,7 @@ function renderClients() {
   <div class="tbl-wrap">
     <table>
       <thead><tr>
+        <th style="width:36px;text-align:center"><input type="checkbox" id="select-all-clients" onclick="toggleSelectAllClients(this)" ${allPageChecked ? "checked" : ""}></th>
         <th style="width:36px">#</th><th>Client / GSTIN</th>
         <th style="width:90px">Freq</th><th style="width:120px">GSTR-1</th>
         <th style="width:130px">GSTR-3B</th><th style="width:110px">Progress</th>
@@ -2639,6 +2653,101 @@ async function submitAddClient() {
     showToast("❌", "Failed to add client: " + err.message);
   }
 }
+
+function toggleSelectClient(cid, checked) {
+  if (checked) {
+    if (!selectedClientIds.includes(cid)) selectedClientIds.push(cid);
+  } else {
+    selectedClientIds = selectedClientIds.filter(id => id !== cid);
+  }
+  renderClients();
+}
+
+function toggleSelectAllClients(master) {
+  const fp = document.getElementById("cl-per")?.value || CUR;
+  const fc = filteredClients(fp);
+  const sortVal = document.getElementById("cl-sort")?.value || "name";
+  let fcSorted = [...fc];
+  fcSorted.sort((a, b) => {
+    if (sortVal === "rent") return (b.rent_amount || 0) - (a.rent_amount || 0);
+    if (sortVal === "arrears") return pendingPeriods(b).length - pendingPeriods(a).length;
+    if (sortVal === "progress") {
+      const fa = getOrInitFiling(a, fp);
+      const fb = getOrInitFiling(b, fp);
+      const pctB = fb ? (stagesDone(fb) / totalStages(fb)) : 0;
+      const pctA = fa ? (stagesDone(fa) / totalStages(fa)) : 0;
+      return pctB - pctA;
+    }
+    return a.name.localeCompare(b.name);
+  });
+  const total = Math.max(1, Math.ceil(fcSorted.length / PER));
+  let currPg = pg;
+  if (currPg > total) currPg = 1;
+  const page = fcSorted.slice((currPg - 1) * PER, currPg * PER);
+
+  if (master.checked) {
+    page.forEach(c => {
+      if (!selectedClientIds.includes(c.id)) selectedClientIds.push(c.id);
+    });
+  } else {
+    const pageIds = page.map(c => c.id);
+    selectedClientIds = selectedClientIds.filter(id => !pageIds.includes(id));
+  }
+  renderClients();
+}
+
+async function deleteClientsFromDB(ids) {
+  if (IS_DEMO) {
+    clients = clients.filter(c => !ids.includes(c.id));
+    return;
+  }
+  const res = await sbFetch("DELETE", "/rest/v1/clients?id=in.(" + ids.join(",") + ")");
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(errText || "Failed to delete from database");
+  }
+  clients = clients.filter(c => !ids.includes(c.id));
+}
+
+async function bulkDeleteClients() {
+  if (selectedClientIds.length === 0) return;
+  const count = selectedClientIds.length;
+  if (!confirm(`Are you sure you want to delete the ${count} selected client(s)?\nThis will permanently remove them and all their filings records. This action cannot be undone.`)) {
+    return;
+  }
+  showToast("⏳", `Deleting ${count} client(s)…`);
+  try {
+    await deleteClientsFromDB(selectedClientIds);
+    selectedClientIds = [];
+    pg = 1;
+    renderClients();
+    updateArrBadge();
+    showToast("✓", `${count} client(s) deleted!`);
+  } catch (err) {
+    showToast("❌", "Failed to delete clients: " + err.message);
+  }
+}
+
+async function deleteSingleClient(cid) {
+  const c = clients.find(x => x.id === cid);
+  if (!c) return;
+  if (!confirm(`Are you sure you want to delete client "${c.name}"?\nThis will permanently remove all their filings records. This action cannot be undone.`)) {
+    return;
+  }
+  showToast("⏳", "Deleting client…");
+  try {
+    await deleteClientsFromDB([cid]);
+    selectedClientIds = selectedClientIds.filter(id => id !== cid);
+    switchTab("clients");
+    pg = 1;
+    renderClients();
+    updateArrBadge();
+    showToast("✓", "Client deleted!");
+  } catch (err) {
+    showToast("❌", "Failed to delete client: " + err.message);
+  }
+}
+
 
 // ═══════════════════════════════════════════════════════════════
 //  CLIENT MODAL
@@ -3583,6 +3692,7 @@ function renderClientProfile(cid) {
         <textarea id="ws-c-notes" class="inp" style="width:100%;height:80px;resize:vertical;font-family:inherit;font-size:12px" placeholder="General client info, guidelines, billing terms...">${escapeHTML(c.notes || '')}</textarea>
       </div>
       <button class="btn btn-blue" style="width:100%;margin-top:10px" onclick="saveWorkspaceClient('${c.id}')">💾 Save Client Profile</button>
+      <button class="btn btn-red" style="width:100%;margin-top:8px" onclick="deleteSingleClient('${c.id}')">🗑 Delete Client</button>
     </div>
   `;
   
