@@ -2322,31 +2322,34 @@ function renderDash() {
   let all = clients.filter(c => c.filings[fp]);
   if (DASH_FREQ !== "all") all = all.filter(c => c.freq === DASH_FREQ);
   const total = all.length;
-  const done = all.filter(c => overallSt(c.filings[fp]) === "done").length;
-  const stuck = all.filter(c => overallSt(c.filings[fp]) === "stuck").length;
-  const locked = all.filter(c => overallSt(c.filings[fp]) === "locked").length;
-  const inprog = all.filter(c => overallSt(c.filings[fp]) === "inprog").length;
-  const pending = all.filter(c => overallSt(c.filings[fp]) === "pending").length;
+
+  // ── 4-state dashboard status ─────────────────────────────────
+  // Priority: filed > client_pending > working > not_started
+  function dashSt(f) {
+    if (!f) return "not_started";
+    const vals = [...Object.values(f.g1.statuses), ...Object.values(f.g3.statuses)];
+    if (vals.every(s => s === "FILED")) return "filed";
+    if (vals.some(s => s === "PENDING FROM CLIENT")) return "client_pending";
+    if (vals.some(s => s === "WORKING")) return "working";
+    return "not_started";
+  }
+
+  const filed       = all.filter(c => dashSt(c.filings[fp]) === "filed").length;
+  const working     = all.filter(c => dashSt(c.filings[fp]) === "working").length;
+  const clientPend  = all.filter(c => dashSt(c.filings[fp]) === "client_pending").length;
+  const notStarted  = all.filter(c => dashSt(c.filings[fp]) === "not_started").length;
+
   const arrAll = clients.filter(c => (DASH_FREQ === "all" || c.freq === DASH_FREQ) && pendingPeriods(c).length > 0);
   const arrC = arrAll.length;
   document.getElementById("arr-ct").textContent = clients.filter(c => pendingPeriods(c).length > 0).length;
-  const donePct = Math.round(done / Math.max(total, 1) * 100);
+  const filedPct = Math.round(filed / Math.max(total, 1) * 100);
   const curLabel = PERIODS.find(p => p.id === fp)?.label || fp;
-  const curType = PERIODS.find(p => p.id === fp)?.type;
+  const curType  = PERIODS.find(p => p.id === fp)?.type;
   const freqLabel = DASH_FREQ === "M" ? "Monthly" : DASH_FREQ === "Q" ? "Quarterly" : "All types";
-  const stuckClients = all.filter(c => {
-    const f = c.filings[fp];
-    if (!f) return false;
-    const g1Stuck = CONFIG.g1Steps.some(step => {
-      const s = f.g1.statuses[step.id];
-      return s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION";
-    });
-    const g3Stuck = CONFIG.g3Steps.some(step => {
-      const s = f.g3.statuses[step.id];
-      return s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION";
-    });
-    return g1Stuck || g3Stuck;
-  });
+
+  // Clients waiting on client
+  const pendingClients = all.filter(c => dashSt(c.filings[fp]) === "client_pending");
+
   const g1c = Array(CONFIG.g1Steps.length).fill(0);
   const g3c = Array(CONFIG.g3Steps.length).fill(0);
   all.forEach(c => {
@@ -2363,31 +2366,31 @@ function renderDash() {
   });
   const maxG = Math.max(...g1c, ...g3c, 1);
 
+  const DASH_SEGS = [
+    { key: "filed",          val: filed,      color: "#22c55e", label: "Filed" },
+    { key: "working",        val: working,    color: "#3b82f6", label: "Working" },
+    { key: "client_pending", val: clientPend, color: "#fbbf24", label: "Pending from Client" },
+    { key: "not_started",    val: notStarted, color: "#2d3a4e", label: "Not Started" },
+  ];
+
   function makeDonut() {
     if (!total) return `<div style="width:110px;height:110px;display:flex;align-items:center;justify-content:center;font-size:12px;color:var(--text3)">No data</div>`;
-    const segs = [
-      { val: done, color: "#22c55e", filter: "done" },
-      { val: inprog, color: "#3b82f6", filter: "inprog" },
-      { val: stuck, color: "#ef4444", filter: "stuck" },
-      { val: locked, color: "#f59e0b", filter: "locked" },
-      { val: pending, color: "#2d3a4e", filter: "" },
-    ];
     const r = 46, circ = 2 * Math.PI * r;
     let offset = 0;
-    const arcs = segs.filter(s => s.val > 0).map(s => {
+    const arcs = DASH_SEGS.filter(s => s.val > 0).map(s => {
       const dash = (s.val / total) * circ, gap = circ - dash;
       const el = `<circle cx="54" cy="54" r="${r}" fill="none" stroke="${s.color}" stroke-width="12"
         stroke-dasharray="${dash.toFixed(2)} ${gap.toFixed(2)}"
         stroke-dashoffset="${(-(offset / total) * circ + circ / 4).toFixed(2)}"
         style="cursor:pointer;transition:opacity .15s"
         onmouseover="this.style.opacity='.7'" onmouseout="this.style.opacity='1'"
-        onclick="setKpiFilter('${s.filter}')"/>`;
+        onclick="setKpiFilter('${s.key}')"/>`;
       offset += s.val; return el;
     }).join("");
     return `<svg style="flex-shrink:0" width="108" height="108" viewBox="0 0 108 108">
       <circle cx="54" cy="54" r="46" fill="none" stroke="#1c2438" stroke-width="12"/>
       ${arcs}
-      <text x="54" y="50" text-anchor="middle" font-size="16" font-weight="700" fill="#f0f4ff" font-family="DM Sans,sans-serif">${donePct}%</text>
+      <text x="54" y="50" text-anchor="middle" font-size="16" font-weight="700" fill="#f0f4ff" font-family="DM Sans,sans-serif">${filedPct}%</text>
       <text x="54" y="64" text-anchor="middle" font-size="8" fill="#4a5a7a" font-family="DM Sans,sans-serif" font-weight="600">FILED</text>
     </svg>`;
   }
@@ -2414,13 +2417,13 @@ function renderDash() {
     <div class="hero-card hc-amber" onclick="setKpiFilter('g3-not-filed')">
       <span class="hc-icon">📋</span><div class="hc-val">${g3NotFiled}</div>
       <div class="hc-label">GSTR-3B Not Filed</div>
-      <div class="hc-sub">Excludes locked clients</div>
+      <div class="hc-sub">${curLabel} · ${freqLabel}</div>
       <span class="hc-arr">→</span>
     </div>
-    <div class="hero-card hc-red" style="background:linear-gradient(135deg,#4c1414 0%,#7f1d1d 100%)" onclick="setKpiFilter('stuck')">
-      <span class="hc-icon">⚠️</span><div class="hc-val">${stuck}</div>
-      <div class="hc-label">Stuck — needs attention</div>
-      <div class="hc-sub">Click to filter clients</div>
+    <div class="hero-card hc-red" style="background:linear-gradient(135deg,#4c2e00 0%,#78500a 100%)" onclick="setKpiFilter('client_pending')">
+      <span class="hc-icon">👤</span><div class="hc-val">${clientPend}</div>
+      <div class="hc-label">Pending from Client</div>
+      <div class="hc-sub">Waiting on client action</div>
       <span class="hc-arr">→</span>
     </div>
     <div class="hero-card hc-blue" onclick="switchTab('arrears')">
@@ -2438,26 +2441,25 @@ function renderDash() {
         ${curLabel}${curType==="Q"?" (Quarterly)":""} · ${freqLabel} — click any segment to filter
       </div>
       <div class="seg-bar">
-        ${done?`<div class="seg" style="width:${done/total*100}%;background:#22c55e" onclick="setKpiFilter('done')" title="Filed: ${done}"></div>`:""}
-        ${inprog?`<div class="seg" style="width:${inprog/total*100}%;background:#3b82f6" onclick="setKpiFilter('inprog')" title="In progress: ${inprog}"></div>`:""}
-        ${stuck?`<div class="seg" style="width:${stuck/total*100}%;background:#ef4444" onclick="setKpiFilter('stuck')" title="Stuck: ${stuck}"></div>`:""}
-        ${locked?`<div class="seg" style="width:${locked/total*100}%;background:#f59e0b" onclick="setKpiFilter('locked')" title="G3B locked: ${locked}"></div>`:""}
-        ${pending?`<div class="seg" style="width:${pending/total*100}%;background:#1c2438" onclick="setKpiFilter('')" title="Not started: ${pending}"></div>`:""}
-        ${!total?`<div style="flex:1;background:var(--bg3)"></div>`:""}
+        ${filed      ? `<div class="seg" style="width:${filed/total*100}%;background:#22c55e" onclick="setKpiFilter('filed')"       title="Filed: ${filed}"></div>`              : ""}
+        ${working    ? `<div class="seg" style="width:${working/total*100}%;background:#3b82f6" onclick="setKpiFilter('working')"   title="Working: ${working}"></div>`          : ""}
+        ${clientPend ? `<div class="seg" style="width:${clientPend/total*100}%;background:#fbbf24" onclick="setKpiFilter('client_pending')" title="Pending from Client: ${clientPend}"></div>` : ""}
+        ${notStarted ? `<div class="seg" style="width:${notStarted/total*100}%;background:#2d3a4e" onclick="setKpiFilter('not_started')" title="Not Started: ${notStarted}"></div>` : ""}
+        ${!total ? `<div style="flex:1;background:var(--bg3)"></div>` : ""}
       </div>
       <div class="legend">
-        ${[{l:"Filed",v:done,c:"#22c55e",f:"done"},{l:"In progress",v:inprog,c:"#3b82f6",f:"inprog"},
-           {l:"Stuck",v:stuck,c:"#ef4444",f:"stuck"},{l:"G3B locked",v:locked,c:"#f59e0b",f:"locked"},
-           {l:"Not started",v:pending,c:"#2d3a4e",f:""}].map(s=>
-          `<div class="legend-item" onclick="setKpiFilter('${s.f}')">
-            <div class="legend-dot" style="background:${s.c}"></div>
-            <span>${s.l}</span><span class="legend-val">${s.v}</span>
+        ${DASH_SEGS.map(s =>
+          `<div class="legend-item" onclick="setKpiFilter('${s.key}')">
+            <div class="legend-dot" style="background:${s.color}"></div>
+            <span>${s.label}</span><span class="legend-val">${s.val}</span>
           </div>`).join("")}
       </div>
       <div class="mini-stats">
-        ${[{icon:"◉",v:inprog,l:"In progress",f:"inprog",c:"#3b82f6"},
-           {icon:"🔒",v:locked,l:"G3B locked",f:"locked",c:"#f59e0b"},
-           {icon:"○",v:pending,l:"Not started",f:"",c:"#4a5a7a"}].map(s=>
+        ${[
+          { icon:"◉", v:working,    l:"Working",             f:"working",        c:"#3b82f6" },
+          { icon:"👤", v:clientPend, l:"Pending from Client", f:"client_pending", c:"#fbbf24" },
+          { icon:"○",  v:notStarted, l:"Not Started",         f:"not_started",    c:"#4a5a7a" }
+        ].map(s =>
           `<div class="mini-stat${kpiFilter===s.f?" active":""}" onclick="setKpiFilter('${s.f}')">
             <div class="mini-stat-icon">${s.icon}</div>
             <div class="mini-stat-val" style="color:${s.c}">${s.v}</div>
@@ -2470,12 +2472,10 @@ function renderDash() {
       <div class="donut-wrap" style="flex:1">
         ${makeDonut()}
         <div class="donut-legend">
-          ${[{l:"Filed",v:done,c:"#22c55e",f:"done"},{l:"In progress",v:inprog,c:"#3b82f6",f:"inprog"},
-             {l:"Stuck",v:stuck,c:"#ef4444",f:"stuck"},{l:"Locked",v:locked,c:"#f59e0b",f:"locked"},
-             {l:"Not started",v:pending,c:"#2d3a4e",f:""}].map(s=>
-            `<div class="dl-item" onclick="setKpiFilter('${s.f}')">
-              <div class="dl-dot" style="background:${s.c}"></div>
-              <span class="dl-lbl">${s.l}</span><span class="dl-val">${s.v}</span>
+          ${DASH_SEGS.map(s =>
+            `<div class="dl-item" onclick="setKpiFilter('${s.key}')">
+              <div class="dl-dot" style="background:${s.color}"></div>
+              <span class="dl-lbl">${s.label}</span><span class="dl-val">${s.val}</span>
             </div>`).join("")}
         </div>
       </div>
@@ -2490,45 +2490,35 @@ function renderDash() {
     <div class="panel">
       <div class="panel-title"><div class="panel-title-dot" style="background:var(--green)"></div>GSTR-3B bottleneck</div>
       ${G3S.map((s,i)=>barRow(i+1+". "+s, g3c[i], maxG, "#22c55e")).join("")}
-      <div class="lock-note">🔒 ${locked} client(s) cannot start GSTR-3B — GSTR-1 not yet filed</div>
     </div>
   </div>
 
   <div class="action-grid">
     <div>
-      <div class="an-title">⚠️ Stuck clients
-        ${stuck?`<span class="an-ct" style="background:var(--red-lt);color:var(--red)">${stuck}</span>`:""}
-        ${stuck?`<span class="see-all" onclick="setKpiFilter('stuck')">See all →</span>`:""}
+      <div class="an-title">👤 Pending from Client
+        ${clientPend?`<span class="an-ct" style="background:rgba(251,191,36,.15);color:#fbbf24">${clientPend}</span>`:""}
+        ${clientPend?`<span class="see-all" onclick="setKpiFilter('client_pending')">See all →</span>`:""}
       </div>
       <div class="alert-list">
-        ${stuckClients.slice(0,5).map(c=>{
+        ${pendingClients.slice(0,5).map(c=>{
           const f=c.filings[fp];
-          const g1s = CONFIG.g1Steps.some(step => {
-            const s = f.g1.statuses[step.id];
-            return s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION";
-          });
-          const si = g1s 
-            ? CONFIG.g1Steps.findIndex(step => {
-                const s = f.g1.statuses[step.id];
-                return s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION";
-              })
-            : CONFIG.g3Steps.findIndex(step => {
-                const s = f.g3.statuses[step.id];
-                return s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION";
-              });
-          const sl = g1s ? CONFIG.g1Steps[si].label : CONFIG.g3Steps[si].label;
+          const g1s = CONFIG.g1Steps.some(step => f.g1.statuses[step.id] === "PENDING FROM CLIENT");
+          const si = g1s
+            ? CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] === "PENDING FROM CLIENT")
+            : CONFIG.g3Steps.findIndex(step => f.g3.statuses[step.id] === "PENDING FROM CLIENT");
+          const sl = g1s ? (CONFIG.g1Steps[si]?.label || "") : (CONFIG.g3Steps[si]?.label || "");
           return `<div class="alert-row" onclick="openClientModal('${c.id}','${fp}')">
-            <div class="alert-icon" style="background:var(--red-lt)">⚠️</div>
+            <div class="alert-icon" style="background:rgba(251,191,36,.15)">👤</div>
             <div class="alert-body">
               <div class="alert-name">${escapeHTML(c.name)}</div>
               <div class="alert-sub">${g1s?"GSTR-1":"G3B"} · S${si+1}: ${escapeHTML(sl.slice(0,32))}${sl.length>32?"…":""}</div>
             </div>
-            <span class="alert-badge" style="background:var(--red-lt);color:var(--red)">Stuck</span>
+            <span class="alert-badge" style="background:rgba(251,191,36,.15);color:#fbbf24">Pending</span>
             <span class="alert-arr">→</span>
           </div>`;
         }).join("")}
-        ${!stuck?`<div class="empty-state">✅ No stuck clients right now</div>`:""}
-        ${stuckClients.length>5?`<div class="see-all" style="display:block;text-align:center;padding:8px" onclick="setKpiFilter('stuck')">+${stuckClients.length-5} more →</div>`:""}
+        ${!clientPend?`<div class="empty-state">✅ No pending client actions right now</div>`:""}
+        ${pendingClients.length>5?`<div class="see-all" style="display:block;text-align:center;padding:8px" onclick="setKpiFilter('client_pending')">+${pendingClients.length-5} more →</div>`:""}
       </div>
     </div>
     <div>
@@ -2555,6 +2545,7 @@ function renderDash() {
     </div>
   </div>`;
 }
+
 
 function setKpiFilter(f) {
   kpiFilter = kpiFilter === f ? "" : f;
