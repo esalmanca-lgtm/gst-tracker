@@ -2203,13 +2203,13 @@ function renderDash() {
 
   document.getElementById("tab-dash").innerHTML = `
   <div class="hero-grid">
-    <div class="hero-card hc-red" onclick="setKpiFilter('inprog')">
+    <div class="hero-card hc-red" onclick="setKpiFilter('g1-not-filed')">
       <span class="hc-icon">📄</span><div class="hc-val">${g1NotFiled}</div>
       <div class="hc-label">GSTR-1 Not Filed</div>
       <div class="hc-sub">${curLabel} · ${freqLabel}</div>
       <span class="hc-arr">→</span>
     </div>
-    <div class="hero-card hc-amber" onclick="switchTab('clients')">
+    <div class="hero-card hc-amber" onclick="setKpiFilter('g3-not-filed')">
       <span class="hc-icon">📋</span><div class="hc-val">${g3NotFiled}</div>
       <div class="hc-label">GSTR-3B Not Filed</div>
       <div class="hc-sub">Excludes locked clients</div>
@@ -2386,9 +2386,17 @@ function filteredClients(fpid) {
     if (rentFilter === "has-rent" && c.rent_amount <= 0) return false;
     if (rentFilter === "no-rent" && c.rent_amount > 0) return false;
     
+    if (kpiFilter === "g1-not-filed") {
+      if (f && g1St(f) === "done") return false;
+    } else if (kpiFilter === "g3-not-filed") {
+      if (f && (g3St(f) === "done" || g3St(f) === "locked")) return false;
+    } else if (kpiFilter) {
+      const st = f ? overallSt(f) : "pending";
+      if (st !== kpiFilter) return false;
+    }
+    
     const st = f ? overallSt(f) : "pending";
     if (fs && st !== fs) return false;
-    if (kpiFilter && st !== kpiFilter) return false;
     return true;
   });
 }
@@ -2401,6 +2409,15 @@ function renderClients() {
   const qValue = document.getElementById("cl-q")?.value || "";
   const rcmFilterVal = document.getElementById("cl-rcm-filter")?.value || "";
   const rentFilterVal = document.getElementById("cl-rent-filter")?.value || "";
+  
+  let kpiBadgeHtml = "";
+  if (kpiFilter) {
+    const label = kpiFilter === "g1-not-filed" ? "GSTR-1 Not Filed" : kpiFilter === "g3-not-filed" ? "GSTR-3B Not Filed" : kpiFilter.toUpperCase();
+    kpiBadgeHtml = `<div class="badge" style="background:var(--amber-lt);color:var(--amber);cursor:pointer;padding:6px 12px;font-size:11px;font-weight:600;border:1px solid rgba(245,158,11,.2);border-radius:6px;display:inline-flex;align-items:center;gap:6px" onclick="kpiFilter=null;renderClients()" title="Click to clear filter">
+      <span>Filter: ${label}</span>
+      <span style="font-weight:700">✕</span>
+    </div>`;
+  }
   
   let fcSorted = [...fc];
   fcSorted.sort((a, b) => {
@@ -2442,9 +2459,10 @@ function renderClients() {
 
   document.getElementById("tab-clients").innerHTML = `
   <div class="toolbar">
+    ${kpiBadgeHtml}
     <div class="search-wrap"><span class="search-icon">🔍</span><input id="cl-q" class="search-inp" type="text" placeholder="Search client, email, phone, GSTIN…" oninput="pg=1;renderClients()" value="${escapeHTML(qValue)}"></div>
     <select id="cl-per" class="sel" onchange="CUR=this.value;renderPeriodBar();pg=1;renderClients()">${pOpts}</select>
-    <select id="cl-st" class="sel" onchange="pg=1;renderClients()">
+    <select id="cl-st" class="sel" onchange="kpiFilter=null;pg=1;renderClients()">
       <option value="">All statuses</option>
       <option value="done">✓ Filed</option>
       <option value="inprog">◉ In progress</option>
