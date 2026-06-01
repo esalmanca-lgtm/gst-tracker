@@ -3527,10 +3527,24 @@ async function dispatchNextQueueItem() {
 
   const msgText = getFollowupMessageText(item);
   navigator.clipboard.writeText(msgText).then(() => {
-    showToast("📋", `Message copied! Opening WhatsApp.`);
-    const groupLink = manualWhatsAppWeb ? "https://web.whatsapp.com/" : (item.client.whatsapp_group || `https://wa.me/${(item.client.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`);
-    window.open(groupLink, "_blank");
+    let groupLink = "https://web.whatsapp.com/";
+    const cleanedPhone = (item.client.phone || "").replace("+", "").trim();
 
+    if (!manualWhatsAppWeb) {
+      if (item.client.whatsapp_group && item.client.whatsapp_group.trim() !== "") {
+        groupLink = item.client.whatsapp_group.trim();
+        showToast("📋", "Copied message & opening group chat! Paste (Ctrl+V) to send.");
+      } else if (cleanedPhone !== "") {
+        groupLink = `https://wa.me/${cleanedPhone}?text=${encodeURIComponent(msgText)}`;
+        showToast("📋", "Copied message & opening direct chat!");
+      } else {
+        showToast("ℹ️", "No group or phone number found. Opened WhatsApp. Search and paste manually!");
+      }
+    } else {
+      showToast("📋", "Copied message! Search group/contact and paste manually.");
+    }
+
+    window.open(groupLink, "_blank");
     queueIndex++;
     renderFollowUps();
   });
@@ -3561,10 +3575,22 @@ async function sendSingleWhatsAppFollowup(cid, category) {
   const mockItem = { client: c, category, period: CUR };
   const msgText = getFollowupMessageText(mockItem);
   navigator.clipboard.writeText(msgText).then(() => {
-    const waLink = manualWhatsAppWeb ? "https://web.whatsapp.com/" : `https://wa.me/${(c.phone || "").replace("+","").trim()}?text=${encodeURIComponent(msgText)}`;
+    let waLink = "https://web.whatsapp.com/";
+    const cleanedPhone = (c.phone || "").replace("+", "").trim();
+
+    if (!manualWhatsAppWeb) {
+      if (cleanedPhone !== "") {
+        waLink = `https://wa.me/${cleanedPhone}?text=${encodeURIComponent(msgText)}`;
+        showToast("💬", "Opening direct chat! Message copied to clipboard.");
+      } else {
+        showToast("ℹ️", "No phone number found. Opened WhatsApp. Search and paste manually!");
+      }
+    } else {
+      showToast("📋", "Copied message! Search contact and paste manually.");
+    }
+
     window.open(waLink, "_blank");
     renderFollowUps();
-    showToast("💬", `WhatsApp opened! Message copied to clipboard.`);
   });
 }
 
@@ -3592,10 +3618,15 @@ async function sendGroupWhatsAppFollowup(cid, category) {
   const msgText = getFollowupMessageText(mockItem);
   
   navigator.clipboard.writeText(msgText).then(() => {
-    const groupLink = manualWhatsAppWeb ? "https://web.whatsapp.com/" : c.whatsapp_group;
+    let groupLink = "https://web.whatsapp.com/";
+    if (!manualWhatsAppWeb && c.whatsapp_group && c.whatsapp_group.trim() !== "") {
+      groupLink = c.whatsapp_group.trim();
+      showToast("📋", "Copied template & opening group! Paste (Ctrl+V) to send.");
+    } else {
+      showToast("📋", "Copied template! Search group and paste manually.");
+    }
     window.open(groupLink, "_blank");
     renderFollowUps();
-    showToast("📋", "Copied template and opened WhatsApp!");
   });
 }
 
