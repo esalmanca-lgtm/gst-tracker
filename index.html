@@ -2680,7 +2680,7 @@ function filteredClients(fpid) {
     const f = getOrInitFiling(c, fp);
     if (q) {
       const matchName = c.name.toLowerCase().includes(q);
-      const matchGstin = c.gstin.toLowerCase().includes(q);
+      const matchGstin = c.gstin && c.gstin.toLowerCase().includes(q);
       const matchEmail = c.email && c.email.toLowerCase().includes(q);
       const matchPhone = c.phone && c.phone.toLowerCase().includes(q);
       if (!matchName && !matchGstin && !matchEmail && !matchPhone) return false;
@@ -3205,7 +3205,7 @@ function renderProgress() {
     if (!f) return false;
     if (q) {
       const matchName = c.name.toLowerCase().includes(q);
-      const matchGstin = c.gstin.toLowerCase().includes(q);
+      const matchGstin = c.gstin && c.gstin.toLowerCase().includes(q);
       const matchEmail = c.email && c.email.toLowerCase().includes(q);
       const matchPhone = c.phone && c.phone.toLowerCase().includes(q);
       if (!matchName && !matchGstin && !matchEmail && !matchPhone) return false;
