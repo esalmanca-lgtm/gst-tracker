@@ -1614,6 +1614,32 @@ let sbChannel = null;
 let lastSyncSnapshot = ""; // Snapshot to optimize polling redraws
 let currentSettingsTab = "general"; // Settings tabs: general, statuses, steps
 
+let focusInfo = null;
+function saveFocus() {
+  const active = document.activeElement;
+  if (active && active.id) {
+    focusInfo = {
+      id: active.id,
+      selectionStart: active.selectionStart,
+      selectionEnd: active.selectionEnd
+    };
+  } else {
+    focusInfo = null;
+  }
+}
+function restoreFocus() {
+  if (focusInfo && focusInfo.id) {
+    const el = document.getElementById(focusInfo.id);
+    if (el) {
+      el.focus();
+      if (typeof focusInfo.selectionStart === "number" && typeof el.setSelectionRange === "function") {
+        el.setSelectionRange(focusInfo.selectionStart, focusInfo.selectionEnd);
+      }
+    }
+  }
+}
+
+
 // ═══════════════════════════════════════════════════════════════
 //  DEMO DATA
 // ═══════════════════════════════════════════════════════════════
@@ -2679,10 +2705,10 @@ function filteredClients(fpid) {
   return clients.filter(c => {
     const f = getOrInitFiling(c, fp);
     if (q) {
-      const matchName = c.name.toLowerCase().includes(q);
-      const matchGstin = c.gstin && c.gstin.toLowerCase().includes(q);
-      const matchEmail = c.email && c.email.toLowerCase().includes(q);
-      const matchPhone = c.phone && c.phone.toLowerCase().includes(q);
+      const matchName = c.name && String(c.name).toLowerCase().includes(q);
+      const matchGstin = c.gstin && String(c.gstin).toLowerCase().includes(q);
+      const matchEmail = c.email && String(c.email).toLowerCase().includes(q);
+      const matchPhone = c.phone && String(c.phone).toLowerCase().includes(q);
       if (!matchName && !matchGstin && !matchEmail && !matchPhone) return false;
     }
     if (ff && c.freq !== ff) return false;
@@ -2706,6 +2732,7 @@ function filteredClients(fpid) {
 }
 
 function renderClients() {
+  saveFocus();
   selectedClientIds = selectedClientIds.filter(id => clients.some(c => c.id === id));
   const fp = document.getElementById("cl-per")?.value || CUR;
   const fc = filteredClients(fp);
@@ -2714,6 +2741,8 @@ function renderClients() {
   const qValue = document.getElementById("cl-q")?.value || "";
   const rcmFilterVal = document.getElementById("cl-rcm-filter")?.value || "";
   const rentFilterVal = document.getElementById("cl-rent-filter")?.value || "";
+  const fsVal = document.getElementById("cl-st")?.value || "";
+  const ffVal = document.getElementById("cl-fr")?.value || "";
   
   let kpiBadgeHtml = "";
   if (kpiFilter) {
@@ -2739,7 +2768,7 @@ function renderClients() {
       const pctA = fa ? (stagesDone(fa) / totalStages(fa)) : 0;
       return pctB - pctA;
     }
-    return a.name.localeCompare(b.name);
+    return String(a.name || "").localeCompare(String(b.name || ""));
   });
   
   const total = Math.max(1, Math.ceil(fcSorted.length / PER));
@@ -2840,9 +2869,10 @@ function renderClients() {
   document.getElementById("cl-rent-filter").value = rentFilterVal;
   document.getElementById("cl-sort").value = sortVal;
   const statusFilter = document.getElementById("cl-st");
-  if (statusFilter) statusFilter.value = fs;
+  if (statusFilter) statusFilter.value = fsVal;
   const freqFilter = document.getElementById("cl-fr");
-  if (freqFilter) freqFilter.value = ff;
+  if (freqFilter) freqFilter.value = ffVal;
+  restoreFocus();
 }
 
 function addClientDialog() {
@@ -2937,8 +2967,8 @@ async function submitAddClient() {
   
   // Duplicate check for UI safety
   const isDuplicate = clients.some(c => 
-    c.name.toLowerCase() === name.toLowerCase() || 
-    (gstin && c.gstin && c.gstin.toLowerCase() === gstin.toLowerCase())
+    (c.name && String(c.name).toLowerCase() === name.toLowerCase()) || 
+    (gstin && c.gstin && String(c.gstin).toLowerCase() === gstin.toLowerCase())
   );
   if (isDuplicate) {
     document.getElementById("ac-err").textContent = "A client with this name or GSTIN already exists";
@@ -2986,7 +3016,7 @@ function toggleSelectAllClients(master) {
       const pctA = fa ? (stagesDone(fa) / totalStages(fa)) : 0;
       return pctB - pctA;
     }
-    return a.name.localeCompare(b.name);
+    return String(a.name || "").localeCompare(String(b.name || ""));
   });
   const total = Math.max(1, Math.ceil(fcSorted.length / PER));
   let currPg = pg;
@@ -3194,8 +3224,10 @@ async function updStage(cid, pid, track, stepId, val) {
 //  STAGE PROGRESS
 // ═══════════════════════════════════════════════════════════════
 function renderProgress() {
+  saveFocus();
   const fp = document.getElementById("sp-per")?.value || CUR;
-  const q = (document.getElementById("sp-q")?.value || "").toLowerCase();
+  const qVal = document.getElementById("sp-q")?.value || "";
+  const q = qVal.toLowerCase();
   const ff = document.getElementById("sp-fr")?.value || "";
   const fs = document.getElementById("sp-st")?.value || "";
   const sort = document.getElementById("sp-sort")?.value || "name";
@@ -3204,10 +3236,10 @@ function renderProgress() {
     const f = getOrInitFiling(c, fp);
     if (!f) return false;
     if (q) {
-      const matchName = c.name.toLowerCase().includes(q);
-      const matchGstin = c.gstin && c.gstin.toLowerCase().includes(q);
-      const matchEmail = c.email && c.email.toLowerCase().includes(q);
-      const matchPhone = c.phone && c.phone.toLowerCase().includes(q);
+      const matchName = c.name && String(c.name).toLowerCase().includes(q);
+      const matchGstin = c.gstin && String(c.gstin).toLowerCase().includes(q);
+      const matchEmail = c.email && String(c.email).toLowerCase().includes(q);
+      const matchPhone = c.phone && String(c.phone).toLowerCase().includes(q);
       if (!matchName && !matchGstin && !matchEmail && !matchPhone) return false;
     }
     if (ff && c.freq !== ff) return false;
@@ -3228,7 +3260,7 @@ function renderProgress() {
       const ord = { stuck: 0, locked: 1, inprog: 2, pending: 3, done: 4 };
       return (ord[overallSt(fa)] || 3) - (ord[overallSt(fb)] || 3);
     }
-    return a.name.localeCompare(b.name);
+    return String(a.name || "").localeCompare(String(b.name || ""));
   });
   
   const total = Math.max(1, Math.ceil(fc.length / PER));
@@ -3309,11 +3341,25 @@ function renderProgress() {
 
   document.getElementById("tab-progress").innerHTML = `
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
-    <div class="search-wrap" style="max-width:200px"><span class="search-icon">🔍</span><input id="sp-q" class="search-inp" type="text" placeholder="Search client, GSTIN, contact..." oninput="pgProg=1;renderProgress()"></div>
+    <div class="search-wrap" style="max-width:200px"><span class="search-icon">🔍</span><input id="sp-q" class="search-inp" type="text" placeholder="Search client, GSTIN, contact..." oninput="pgProg=1;renderProgress()" value="${escapeHTML(qVal)}"></div>
     <select id="sp-per" class="sel" onchange="CUR=this.value;renderPeriodBar();pgProg=1;renderProgress()">${pOpts}</select>
-    <select id="sp-fr" class="sel" onchange="pgProg=1;renderProgress()"><option value="">All types</option><option value="M">Monthly</option><option value="Q">Quarterly</option></select>
-    <select id="sp-st" class="sel" onchange="pgProg=1;renderProgress()"><option value="">All statuses</option><option value="done">✓ Filed</option><option value="inprog">In progress</option><option value="stuck">⚠ Stuck</option><option value="locked">🔒 Locked</option></select>
-    <select id="sp-sort" class="sel" onchange="renderProgress()"><option value="name">Sort: Name</option><option value="status">Sort: Status (stuck first)</option><option value="progress">Sort: Progress</option></select>
+    <select id="sp-fr" class="sel" onchange="pgProg=1;renderProgress()">
+      <option value="" ${ff===''?'selected':''}>All types</option>
+      <option value="M" ${ff==='M'?'selected':''}>Monthly</option>
+      <option value="Q" ${ff==='Q'?'selected':''}>Quarterly</option>
+    </select>
+    <select id="sp-st" class="sel" onchange="pgProg=1;renderProgress()">
+      <option value="" ${fs===''?'selected':''}>All statuses</option>
+      <option value="done" ${fs==='done'?'selected':''}>✓ Filed</option>
+      <option value="inprog" ${fs==='inprog'?'selected':''}>In progress</option>
+      <option value="stuck" ${fs==='stuck'?'selected':''}>⚠ Stuck</option>
+      <option value="locked" ${fs==='locked'?'selected':''}>🔒 Locked</option>
+    </select>
+    <select id="sp-sort" class="sel" onchange="renderProgress()">
+      <option value="name" ${sort==='name'?'selected':''}>Sort: Name</option>
+      <option value="status" ${sort==='status'?'selected':''}>Sort: Status (stuck first)</option>
+      <option value="progress" ${sort==='progress'?'selected':''}>Sort: Progress</option>
+    </select>
   </div>
   <div style="font-size:11px;color:var(--text3);margin-bottom:10px">Hover dots to view step names · Click row to edit inline · Click dots to open update modal</div>
   <div>${page.map(spvRow).join("") || `<div class="empty-state">No clients match your filters.</div>`}</div>
@@ -3324,6 +3370,18 @@ function renderProgress() {
   </div>`;
   document.getElementById("sp-prev").disabled = pgProg === 1;
   document.getElementById("sp-next").disabled = pgProg === total;
+
+  // Retain UI filter inputs programmatically
+  const spQInput = document.getElementById("sp-q");
+  if (spQInput) spQInput.value = qVal;
+  const spFrSelect = document.getElementById("sp-fr");
+  if (spFrSelect) spFrSelect.value = ff;
+  const spStSelect = document.getElementById("sp-st");
+  if (spStSelect) spStSelect.value = fs;
+  const spSortSelect = document.getElementById("sp-sort");
+  if (spSortSelect) spSortSelect.value = sort;
+
+  restoreFocus();
 }
 
 function buildSpvDetail(c, fp, f) {
