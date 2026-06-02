@@ -691,6 +691,11 @@ tr.dr.expanded td{background:rgba(59,130,246,.05)}
   color: var(--text);
   border-color: var(--text3);
 }
+.stage-toggle-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
 .locked-msg{
   font-size:11px;color:var(--amber);
   background:var(--amber-lt);border-radius:var(--r);
@@ -1738,7 +1743,7 @@ function mapLegacyStatus(legacyVal) {
 
 function migrateFilingData(f) {
   if (!f) return null;
-  let g1Obj = { statuses: {}, arn: "", filing_date: "", notes: "" };
+  let g1Obj = { statuses: {}, arn: "", filing_date: "", notes: "", isNil: false };
   let g3Obj = { statuses: {}, arn: "", filing_date: "", tax_paid: 0, notes: "" };
 
   if (f.g1) {
@@ -1748,7 +1753,7 @@ function migrateFilingData(f) {
         g1Obj.statuses[step.id] = mapLegacyStatus(legacyVal);
       });
     } else if (f.g1.statuses) {
-      g1Obj = { ...f.g1, statuses: { ...f.g1.statuses } };
+      g1Obj = { isNil: false, ...f.g1, statuses: { ...f.g1.statuses } };
     } else {
       g1Obj.statuses = { ...f.g1 };
     }
@@ -1772,7 +1777,9 @@ function migrateFilingData(f) {
   });
   CONFIG.g3Steps.forEach(step => {
     if (!g3Obj.statuses[step.id]) {
-      const g1done = Object.values(g1Obj.statuses).every(s => s === "FILED");
+      const g1done = g1Obj.isNil
+        ? g1Obj.statuses["g1_s2"] === "FILED"
+        : Object.values(g1Obj.statuses).every(s => s === "FILED");
       g3Obj.statuses[step.id] = g1done ? CONFIG.statuses[0].name : "PENDING PREVIOUS PERIOD FILING";
     }
   });
@@ -1787,7 +1794,7 @@ function getOrInitFiling(c, pid) {
   if (c.freq === "Q" && p.type === "M") return null;
 
   if (!c.filings[pid]) {
-    let g1Obj = { statuses: {}, arn: "", filing_date: "", notes: "" };
+    let g1Obj = { statuses: {}, arn: "", filing_date: "", notes: "", isNil: false };
     let g3Obj = { statuses: {}, arn: "", filing_date: "", tax_paid: 0, notes: "" };
     CONFIG.g1Steps.forEach(step => { g1Obj.statuses[step.id] = CONFIG.statuses[0].name; });
     CONFIG.g3Steps.forEach(step => { g3Obj.statuses[step.id] = "PENDING PREVIOUS PERIOD FILING"; });
@@ -1839,8 +1846,23 @@ async function loadConfig() {
   }
 }
 
+function isG1Done(f) {
+  if (!f || !f.g1) return false;
+  if (f.g1.isNil) {
+    return f.g1.statuses["g1_s2"] === "FILED";
+  }
+  return CONFIG.g1Steps.every(step => f.g1.statuses[step.id] === "FILED");
+}
+
 function g1St(f) {
   if (!f || !f.g1 || !f.g1.statuses) return "pending";
+  if (f.g1.isNil) {
+    const s = f.g1.statuses["g1_s2"] || CONFIG.statuses[0].name;
+    if (s === "FILED") return "done";
+    if (s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION") return "stuck";
+    if (s === "WORKING") return "inprog";
+    return "pending";
+  }
   const vals = Object.values(f.g1.statuses);
   if (vals.every(s => s === "FILED")) return "done";
   if (vals.some(s => s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION")) return "stuck";
@@ -1956,13 +1978,15 @@ function pendingPeriods(c) {
 }
 function stagesDone(f) {
   if (!f) return 0;
-  const g1c = f.g1 && f.g1.statuses ? Object.values(f.g1.statuses).filter(s => s === "FILED").length : 0;
+  const g1c = f.g1 && f.g1.statuses ? (f.g1.isNil ? (f.g1.statuses["g1_s2"] === "FILED" ? 1 : 0) : Object.values(f.g1.statuses).filter(s => s === "FILED").length) : 0;
   const g3c = f.g3 && f.g3.statuses ? Object.values(f.g3.statuses).filter(s => s === "FILED").length : 0;
   return g1c + g3c;
 }
 function totalStages(f) {
-  const g1Len = CONFIG.g1Steps.length, g3Len = CONFIG.g3Steps.length;
-  if (!f || !f.g3 || !f.g3.statuses) return g1Len + g3Len;
+  if (!f) return CONFIG.g1Steps.length + CONFIG.g3Steps.length;
+  const g1Len = f.g1 && f.g1.isNil ? 1 : CONFIG.g1Steps.length;
+  const g3Len = CONFIG.g3Steps.length;
+  if (!f.g3 || !f.g3.statuses) return g1Len + g3Len;
   const isG3Locked = Object.values(f.g3.statuses).some(s => s === "PENDING PREVIOUS PERIOD FILING");
   return isG3Locked ? g1Len : g1Len + g3Len;
 }
@@ -2459,7 +2483,8 @@ function renderDash() {
   // Priority: filed > client_pending > working > not_started
   function dashSt(f) {
     if (!f) return "not_started";
-    const vals = [...Object.values(f.g1.statuses), ...Object.values(f.g3.statuses)];
+    const g1Vals = f.g1.isNil ? [f.g1.statuses["g1_s2"] || CONFIG.statuses[0].name] : Object.values(f.g1.statuses);
+    const vals = [...g1Vals, ...Object.values(f.g3.statuses)];
     if (vals.every(s => s === "FILED")) return "filed";
     if (vals.some(s => s === "PENDING FROM CLIENT")) return "client_pending";
     if (vals.some(s => s === "WORKING")) return "working";
@@ -2487,9 +2512,9 @@ function renderDash() {
   all.forEach(c => {
     const f = c.filings[fp];
     if (!f) return;
-    const g1done = CONFIG.g1Steps.every(step => f.g1.statuses[step.id] === "FILED");
+    const g1done = isG1Done(f);
     if (!g1done) {
-      const i = CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] !== "FILED");
+      const i = f.g1.isNil ? 1 : CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] !== "FILED");
       if (i >= 0) g1c[i]++;
     } else {
       const i = CONFIG.g3Steps.findIndex(step => f.g3.statuses[step.id] !== "FILED");
@@ -2929,7 +2954,7 @@ async function createClientWithFilings(name, gstin, freq, rent_amount=0, rcm_app
   const filings = {};
   
   for (const p of perids) {
-    let g1Obj = { statuses: {}, arn: "", filing_date: "", notes: "" };
+    let g1Obj = { statuses: {}, arn: "", filing_date: "", notes: "", isNil: false };
     let g3Obj = { statuses: {}, arn: "", filing_date: "", tax_paid: 0, notes: "" };
     CONFIG.g1Steps.forEach(step => { g1Obj.statuses[step.id] = CONFIG.statuses[0].name; });
     CONFIG.g3Steps.forEach(step => { g3Obj.statuses[step.id] = "PENDING PREVIOUS PERIOD FILING"; });
@@ -3107,16 +3132,23 @@ function openClientModal(cid, pid) {
   if (!f) {
     trackHtml = `<div style="font-size:12px;color:var(--text3);padding:12px 0">Period not applicable for this client.</div>`;
   } else {
-    const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
-    const g1c = Object.values(f.g1.statuses).filter(s => s === "FILED").length;
+    const g1done = isG1Done(f);
+    const g1c = f.g1.isNil ? (f.g1.statuses["g1_s2"] === "FILED" ? 1 : 0) : Object.values(f.g1.statuses).filter(s => s === "FILED").length;
+    const g1Total = f.g1.isNil ? 1 : CONFIG.g1Steps.length;
     const g3c = Object.values(f.g3.statuses).filter(s => s === "FILED").length;
 
     let tl = `<div class="tl-wrap">`;
     CONFIG.g1Steps.forEach((step, i) => {
       const s = f.g1.statuses[step.id] || CONFIG.statuses[0].name;
       const statusObj = CONFIG.statuses.find(x => x.name === s) || CONFIG.statuses[0];
-      if (i > 0) tl += `<div class="tl-conn${s==="FILED"?" done-c":""}"></div>`;
-      tl += `<div class="tl-step"><div class="tl-dot ${stDotClass(s)}" style="background:${statusObj.color};border-color:${statusObj.color};color:#fff" title="${escapeHTML(step.label)}">${statusObj.icon}</div><div class="tl-lbl">${escapeHTML(step.label.split(" ").slice(0,2).join(" "))}</div></div>`;
+      const isD = f.g1.isNil && step.id !== "g1_s2";
+      if (i > 0) {
+        const prevStep = CONFIG.g1Steps[i - 1];
+        const prevD = f.g1.isNil && prevStep.id !== "g1_s2";
+        const connClass = (s === "FILED" && !isD && !prevD) ? " done-c" : "";
+        tl += `<div class="tl-conn${connClass}" style="${(isD || prevD) ? 'opacity:0.35;' : ''}"></div>`;
+      }
+      tl += `<div class="tl-step" style="${isD ? 'opacity:0.35;' : ''}"><div class="tl-dot ${stDotClass(s)}" style="background:${isD ? 'var(--border)' : statusObj.color};border-color:${isD ? 'var(--border)' : statusObj.color};color:#fff" title="${escapeHTML(step.label)}${isD ? ' (Disabled — Nil Return)' : ''}">${isD ? '—' : statusObj.icon}</div><div class="tl-lbl">${escapeHTML(step.label.split(" ").slice(0,2).join(" "))}</div></div>`;
     });
     tl += `<div class="tl-conn"></div><div class="tl-phase-chip ${g1done?"g3-chip":"g3-locked-chip"}">G3B${g1done?"":"🔒"}</div><div class="tl-conn"></div>`;
     CONFIG.g3Steps.forEach((step, i) => {
@@ -3129,11 +3161,12 @@ function openClientModal(cid, pid) {
 
     const g1rows = CONFIG.g1Steps.map((step, i) => {
       const s = f.g1.statuses[step.id] || CONFIG.statuses[0].name;
+      const isD = f.g1.isNil && step.id !== "g1_s2";
       return `
-        <div class="stage-item">
-          <div class="snum" style="background:${stColor(s)}">${i+1}</div>
-          <div class="slbl" title="${escapeHTML(step.label)}">${escapeHTML(step.label)}</div>
-          <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${cid}','${fpid}','g1','${step.id}','${s}',false)">
+        <div class="stage-item" style="${isD ? 'opacity:0.4; pointer-events:none;' : ''}">
+          <div class="snum" style="background:${isD ? 'var(--border)' : stColor(s)}">${i+1}</div>
+          <div class="slbl" title="${escapeHTML(step.label)}${isD ? ' (Disabled — Nil Return)' : ''}">${escapeHTML(step.label)}</div>
+          <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" ${isD ? 'disabled' : ''} onclick="toggleStageBtn('${cid}','${fpid}','g1','${step.id}','${s}',false)">
             ${s === 'FILED' ? '✓ Done' : 'Not Done'}
           </button>
         </div>`;
@@ -3157,14 +3190,22 @@ function openClientModal(cid, pid) {
     <div style="margin-bottom:14px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
         <span class="tl-phase-chip g1-chip">GSTR-1</span>
-        <span style="font-size:11px;color:var(--text2)">${g1c+g3c}/${CONFIG.g1Steps.length+CONFIG.g3Steps.length} stages done</span>
+        <span style="font-size:11px;color:var(--text2)">${g1c+g3c}/${g1Total+CONFIG.g3Steps.length} stages done</span>
         <span class="tl-phase-chip ${g1done?"g3-chip":"g3-locked-chip"}">GSTR-3B</span>
       </div>
       ${tl}
     </div>
     <div class="track-grid">
       <div class="track-box">
-        <div class="track-hdr g1-hdr"><span>📄 GSTR-1</span><span class="track-prog">${g1c}/${CONFIG.g1Steps.length}</span></div>
+        <div class="track-hdr g1-hdr" style="gap: 8px;">
+          <span>📄 GSTR-1</span>
+          <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+            <button class="stage-toggle-btn ${f.g1.isNil ? 'done' : 'pending'}" style="padding:2px 8px;font-size:10px;height:auto;line-height:1" onclick="toggleNilReturn('${cid}','${fpid}',false)">
+              ${f.g1.isNil ? '✓ Nil Return' : 'Mark Nil'}
+            </button>
+            <span class="track-prog">${g1c}/${g1Total}</span>
+          </div>
+        </div>
         ${g1rows}
       </div>
       <div class="track-box">
@@ -3185,6 +3226,37 @@ function openClientModal(cid, pid) {
 
 function closeModal() { document.getElementById("modal").style.display = "none"; }
 
+async function toggleNilReturn(cid, pid, isProg = false) {
+  const c = clients.find(x => x.id === cid);
+  const f = getOrInitFiling(c, pid);
+  if (!f) return;
+  
+  f.g1.isNil = !f.g1.isNil;
+  
+  const g1done = isG1Done(f);
+  if (g1done) {
+    CONFIG.g3Steps.forEach(step => {
+      if (f.g3.statuses[step.id] === "PENDING PREVIOUS PERIOD FILING") {
+        f.g3.statuses[step.id] = CONFIG.statuses[0].name;
+      }
+    });
+  } else {
+    CONFIG.g3Steps.forEach(step => {
+      f.g3.statuses[step.id] = "PENDING PREVIOUS PERIOD FILING";
+    });
+  }
+  
+  if (isProg) {
+    renderProgress();
+  } else {
+    openClientModal(cid, pid);
+    renderCurrentTab();
+  }
+  updateArrBadge();
+  await saveStage(cid, pid, 'g1', f.g1.statuses['g1_s1']);
+  if (!IS_DEMO) showToast("✓", f.g1.isNil ? "Marked as Nil Return" : "Nil Return unmarked");
+}
+
 async function toggleStageBtn(cid, pid, track, stepId, curVal, isProg = false) {
   const newVal = (curVal === "FILED") ? "PENDING" : "FILED";
   if (isProg) {
@@ -3200,7 +3272,7 @@ async function updStage(cid, pid, track, stepId, val) {
   if (!f) return;
   f[track].statuses[stepId] = val;
   
-  const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+  const g1done = isG1Done(f);
   if (g1done) {
     CONFIG.g3Steps.forEach(step => {
       if (f.g3.statuses[step.id] === "PENDING PREVIOUS PERIOD FILING") {
@@ -3274,19 +3346,20 @@ function renderProgress() {
     const pp = pendingPeriods(c);
     const totalArrs = g1ArrearPeriods(c).length + g3ArrearPeriods(c).length;
     
-    const g1c = Object.values(f.g1.statuses).filter(s => s === "FILED").length;
-    const g1Total = CONFIG.g1Steps.length;
+    const g1c = f.g1.isNil ? (f.g1.statuses["g1_s2"] === "FILED" ? 1 : 0) : Object.values(f.g1.statuses).filter(s => s === "FILED").length;
+    const g1Total = f.g1.isNil ? 1 : CONFIG.g1Steps.length;
     const g1Pct = g1Total ? Math.round((g1c / g1Total) * 100) : 0;
     
     const g3c = Object.values(f.g3.statuses).filter(s => s === "FILED").length;
     const g3Total = CONFIG.g3Steps.length;
     const g3Pct = g3Total ? Math.round((g3c / g3Total) * 100) : 0;
-    const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+    const g1done = isG1Done(f);
     
     const g1Dots = CONFIG.g1Steps.map((step, i) => {
       const s = f.g1.statuses[step.id] || CONFIG.statuses[0].name;
       const statusObj = CONFIG.statuses.find(x => x.name === s) || CONFIG.statuses[0];
-      return `<div class="sp-dot ${stDotClass(s)}" style="background:${statusObj.color};border-color:${statusObj.color}" data-tip="G1 S${i+1} (${escapeHTML(step.label)}): ${s}" onclick="event.stopPropagation();openClientModal('${c.id}','${fp}')">${statusObj.icon}</div>`;
+      const isD = f.g1.isNil && step.id !== "g1_s2";
+      return `<div class="sp-dot ${stDotClass(s)}" style="background:${isD ? 'var(--border)' : statusObj.color};border-color:${isD ? 'var(--border)' : statusObj.color};${isD ? 'opacity:0.35;pointer-events:none;' : ''}" data-tip="G1 S${i+1} (${escapeHTML(step.label)})${isD ? ' (Disabled — Nil Return)' : ': ' + s}" onclick="event.stopPropagation();openClientModal('${c.id}','${fp}')">${isD ? '—' : statusObj.icon}</div>`;
     }).join("");
     
     const g3Dots = g1done 
@@ -3385,15 +3458,18 @@ function renderProgress() {
 }
 
 function buildSpvDetail(c, fp, f) {
-  const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+  const g1done = isG1Done(f);
+  const g1c = f.g1.isNil ? (f.g1.statuses["g1_s2"] === "FILED" ? 1 : 0) : Object.values(f.g1.statuses).filter(s => s === "FILED").length;
+  const g1Total = f.g1.isNil ? 1 : CONFIG.g1Steps.length;
   
   const g1rows = CONFIG.g1Steps.map((step, i) => {
     const s = f.g1.statuses[step.id] || CONFIG.statuses[0].name;
+    const isD = f.g1.isNil && step.id !== "g1_s2";
     return `
-      <div class="stage-item">
-        <div class="snum" style="background:${stColor(s)}">${i+1}</div>
-        <div class="slbl" style="font-size:11px">${escapeHTML(step.label)}</div>
-        <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" onclick="toggleStageBtn('${c.id}','${fp}','g1','${step.id}','${s}',true)">
+      <div class="stage-item" style="${isD ? 'opacity:0.4; pointer-events:none;' : ''}">
+        <div class="snum" style="background:${isD ? 'var(--border)' : stColor(s)}">${i+1}</div>
+        <div class="slbl" style="font-size:11px" title="${escapeHTML(step.label)}${isD ? ' (Disabled — Nil Return)' : ''}">${escapeHTML(step.label)}</div>
+        <button class="stage-toggle-btn ${s === 'FILED' ? 'done' : 'pending'}" ${isD ? 'disabled' : ''} onclick="toggleStageBtn('${c.id}','${fp}','g1','${step.id}','${s}',true)">
           ${s === 'FILED' ? '✓ Done' : 'Not Done'}
         </button>
       </div>`;
@@ -3414,7 +3490,18 @@ function buildSpvDetail(c, fp, f) {
     : `<div class="locked-msg">🔒 Complete GSTR-1 first to unlock GSTR-3B</div>`;
     
   return `<div class="track-grid">
-    <div class="track-box"><div class="track-hdr g1-hdr"><span>📄 GSTR-1 Stages</span><span class="track-prog">${Object.values(f.g1.statuses).filter(s=>s==="FILED").length}/${CONFIG.g1Steps.length}</span></div>${g1rows}</div>
+    <div class="track-box">
+      <div class="track-hdr g1-hdr" style="gap: 8px;">
+        <span>📄 GSTR-1 Stages</span>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          <button class="stage-toggle-btn ${f.g1.isNil ? 'done' : 'pending'}" style="padding:2px 8px;font-size:10px;height:auto;line-height:1" onclick="toggleNilReturn('${c.id}','${fp}',true)">
+            ${f.g1.isNil ? '✓ Nil Return' : 'Mark Nil'}
+          </button>
+          <span class="track-prog">${g1c}/${g1Total}</span>
+        </div>
+      </div>
+      ${g1rows}
+    </div>
     <div class="track-box"><div class="track-hdr ${g1done?'g3-hdr':'locked-hdr'}"><span>${g1done?'📋':'🔒'} GSTR-3B Stages</span><span class="track-prog">${g1done?Object.values(f.g3.statuses).filter(s=>s==="FILED").length+"/"+CONFIG.g3Steps.length:'Locked'}</span></div>${g3rows}</div>
   </div>`;
 }
@@ -3430,7 +3517,7 @@ async function updStageProg(cid, pid, track, stepId, val) {
   if (!f) return;
   f[track].statuses[stepId] = val;
   
-  const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+  const g1done = isG1Done(f);
   if (g1done) {
     CONFIG.g3Steps.forEach(step => {
       if (f.g3.statuses[step.id] === "PENDING PREVIOUS PERIOD FILING") {
@@ -3942,9 +4029,9 @@ function renderStages() {
     const f = getOrInitFiling(c, fp);
     if (!f) return;
     
-    const g1done = CONFIG.g1Steps.every(step => f.g1.statuses[step.id] === "FILED");
+    const g1done = isG1Done(f);
     if (!g1done) {
-      const i = CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] !== "FILED");
+      const i = f.g1.isNil ? 1 : CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] !== "FILED");
       if (i >= 0) {
         const s = f.g1.statuses[CONFIG.g1Steps[i].id];
         if (s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION") {
@@ -4596,7 +4683,7 @@ function renderClientProfile(cid) {
   if (activePeriodId) {
     const f = getOrInitFiling(c, activePeriodId);
     if (f) {
-      const g1done = Object.values(f.g1.statuses).every(s => s === "FILED");
+      const g1done = isG1Done(f);
       const activePeriodLabel = allPeriods.find(p => p.id === activePeriodId)?.label || activePeriodId;
       
       filingDetailsHtml = `
