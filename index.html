@@ -2146,21 +2146,34 @@ async function saveStage(clientId, periodId, track, val) {
   const f = c.filings[periodId];
   try {
     if (f._dbId) {
-      await sbFetch("PATCH",
+      const res = await sbFetch("PATCH",
         `/rest/v1/filings?id=eq.${f._dbId}`,
         { [track]: f[track], updated_at: new Date().toISOString() }
       );
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { const json = JSON.parse(text); msg = json.message || text; } catch(e) {}
+        throw new Error(msg);
+      }
     } else {
       const res = await sbFetch("POST", "/rest/v1/filings", {
         client_id: clientId, period_id: periodId,
         g1: f.g1, g3: f.g3,
       });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { const json = JSON.parse(text); msg = json.message || text; } catch(e) {}
+        throw new Error(msg);
+      }
       const data = await res.json();
       if (data[0]?.id) f._dbId = data[0].id;
     }
     setSyncStatus("live");
   } catch (e) {
-    showToast("⚠️", "Save error — retrying…");
+    console.error("Filing save error:", e);
+    showToast("⚠️", "Save error — " + e.message);
     setSyncStatus("offline");
   }
 }
@@ -2173,6 +2186,12 @@ async function addClientToDB(name, gstin, freq, rent_amount=0, rcm_applicable=fa
   const res = await sbFetch("POST", "/rest/v1/clients", { 
     name, gstin, freq, rent_amount, rcm_applicable, email, phone, portal_username, portal_password, notes, whatsapp_group 
   });
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text;
+    try { const json = JSON.parse(text); msg = json.message || text; } catch(e) {}
+    throw new Error(msg);
+  }
   const data = await res.json();
   if (data && data[0]) {
     return { ...data[0] };
@@ -4631,7 +4650,7 @@ async function saveWorkspaceClient(cid) {
   
   if (!IS_DEMO) {
     try {
-      await sbFetch("PATCH", `/rest/v1/clients?id=eq.${cid}`, {
+      const res = await sbFetch("PATCH", `/rest/v1/clients?id=eq.${cid}`, {
         name: c.name,
         gstin: c.gstin,
         freq: c.freq,
@@ -4644,13 +4663,22 @@ async function saveWorkspaceClient(cid) {
         notes: c.notes,
         whatsapp_group: c.whatsapp_group
       });
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = text;
+        try { const json = JSON.parse(text); msg = json.message || text; } catch(e) {}
+        throw new Error(msg);
+      }
       setSyncStatus("live");
+      showToast("✓", "Profile saved!");
     } catch(e) {
-      showToast("⚠️", "Save error — saved locally");
+      console.error("Save client profile error:", e);
+      showToast("⚠️", "Save error — " + e.message);
       setSyncStatus("offline");
     }
+  } else {
+    showToast("✓", "Profile saved!");
   }
-  showToast("✓", "Profile saved!");
   renderClientProfile(cid);
   updateArrBadge();
 }
@@ -4677,11 +4705,17 @@ async function saveWorkspaceFiling(cid, pid) {
   if (!IS_DEMO) {
     try {
       if (f._dbId) {
-        await sbFetch("PATCH", `/rest/v1/filings?id=eq.${f._dbId}`, {
+        const res = await sbFetch("PATCH", `/rest/v1/filings?id=eq.${f._dbId}`, {
           g1: f.g1,
           g3: f.g3,
           updated_at: new Date().toISOString()
         });
+        if (!res.ok) {
+          const text = await res.text();
+          let msg = text;
+          try { const json = JSON.parse(text); msg = json.message || text; } catch(e) {}
+          throw new Error(msg);
+        }
       } else {
         const res = await sbFetch("POST", "/rest/v1/filings", {
           client_id: cid,
@@ -4689,16 +4723,25 @@ async function saveWorkspaceFiling(cid, pid) {
           g1: f.g1,
           g3: f.g3
         });
+        if (!res.ok) {
+          const text = await res.text();
+          let msg = text;
+          try { const json = JSON.parse(text); msg = json.message || text; } catch(e) {}
+          throw new Error(msg);
+        }
         const data = await res.json();
         if (data && data[0]?.id) f._dbId = data[0].id;
       }
       setSyncStatus("live");
+      showToast("✓", "Filing details saved!");
     } catch(e) {
-      showToast("⚠️", "Save error — saved locally");
+      console.error("Save filing details error:", e);
+      showToast("⚠️", "Save error — " + e.message);
       setSyncStatus("offline");
     }
+  } else {
+    showToast("✓", "Filing details saved!");
   }
-  showToast("✓", "Filing details saved!");
   renderClientProfile(cid);
   updateArrBadge();
 }
