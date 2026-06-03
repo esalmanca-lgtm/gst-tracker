@@ -4020,73 +4020,78 @@ async function resolveFollowupItem(cid, category) {
 //  STAGE VIEW
 // ═══════════════════════════════════════════════════════════════
 function renderStages() {
-  const fp = document.getElementById("stg-per")?.value || CUR;
-  const curC = clients.filter(c => c.filings[fp]);
-  const g1c = CONFIG.g1Steps.map(() => ({ inprog: [], stuck: [] }));
-  const g3c = CONFIG.g3Steps.map(() => ({ inprog: [], stuck: [] }));
-  
-  curC.forEach(c => {
-    const f = getOrInitFiling(c, fp);
-    if (!f) return;
+  try {
+    const fp = document.getElementById("stg-per")?.value || CUR;
+    const curC = clients.filter(c => c.filings[fp]);
+    const g1c = CONFIG.g1Steps.map(() => ({ inprog: [], stuck: [] }));
+    const g3c = CONFIG.g3Steps.map(() => ({ inprog: [], stuck: [] }));
     
-    const g1done = isG1Done(f);
-    if (!g1done) {
-      const i = f.g1.isNil ? 1 : CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] !== "FILED");
-      if (i >= 0) {
-        const s = f.g1.statuses[CONFIG.g1Steps[i].id];
-        if (s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION") {
-          g1c[i].stuck.push(c);
-        } else if (s === "WORKING") {
-          g1c[i].inprog.push(c);
+    curC.forEach(c => {
+      const f = getOrInitFiling(c, fp);
+      if (!f) return;
+      
+      const g1done = isG1Done(f);
+      if (!g1done) {
+        const i = f.g1.isNil ? 1 : CONFIG.g1Steps.findIndex(step => f.g1.statuses[step.id] !== "FILED");
+        if (i >= 0) {
+          const s = f.g1.statuses[CONFIG.g1Steps[i].id];
+          if (s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION") {
+            g1c[i].stuck.push(c);
+          } else if (s === "WORKING") {
+            g1c[i].inprog.push(c);
+          }
+        }
+      } else {
+        const i = CONFIG.g3Steps.findIndex(step => f.g3.statuses[step.id] !== "FILED");
+        if (i >= 0) {
+          const s = f.g3.statuses[CONFIG.g3Steps[i].id];
+          if (s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION") {
+            g3c[i].stuck.push(c);
+          } else if (s === "WORKING") {
+            g3c[i].inprog.push(c);
+          }
         }
       }
-    } else {
-      const i = CONFIG.g3Steps.findIndex(step => f.g3.statuses[step.id] !== "FILED");
-      if (i >= 0) {
-        const s = f.g3.statuses[CONFIG.g3Steps[i].id];
-        if (s === "PENDING FROM CLIENT" || s === "PENDING CONFIRMATION") {
-          g3c[i].stuck.push(c);
-        } else if (s === "WORKING") {
-          g3c[i].inprog.push(c);
-        }
-      }
-    }
-  });
-  
-  const pOpts = PERIODS.map(p => `<option value="${p.id}"${p.id===fp?" selected":""}>${escapeHTML(p.label)}${p.type==="Q"?" (Q)":""}</option>`).join("");
+    });
+    
+    const pOpts = PERIODS.map(p => `<option value="${p.id}"${p.id===fp?" selected":""}>${escapeHTML(p.label)}${p.type==="Q"?" (Q)":""}</option>`).join("");
 
-  function mkCard(s, i, d, phase) {
-    const color = phase === "g1" ? "#3b82f6" : "#22c55e";
-    const total = d.inprog.length + d.stuck.length;
-    const names = [...d.stuck.map(c=>({c,st:"Stuck"})), ...d.inprog.map(c=>({c,st:"In progress"}))];
-    return `<div class="kc" style="border-top-color:${color}">
-      <div class="kc-phase">${phase==="g1"?"GSTR-1":"GSTR-3B"} · Stage ${i+1}</div>
-      <div class="kc-lbl">${escapeHTML(s)}</div>
-      <div class="kc-count" style="color:${color}">${total}</div>
-      <div class="kc-breakdown">
-        ${d.inprog.length?`<span style="color:#3b82f6;font-size:10px;font-weight:700">◉ ${d.inprog.length} in progress</span>`:""}
-        ${d.stuck.length?`<span style="color:#ef4444;font-size:10px;font-weight:700">⚠ ${d.stuck.length} stuck</span>`:""}
-        ${!total?`<span style="color:var(--text3);font-size:10px">No one here</span>`:""}
-      </div>
-      <div class="kc-names">${names.slice(0,5).map(({c,st})=>`
-        <div class="kc-name-item" onclick="openClientModal('${c.id}','${fp}')">
-          <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block;background:${st==="Stuck"?"#ef4444":"#3b82f6"}"></span>
-          <span style="color:${st==="Stuck"?"var(--red)":"var(--blue)"};font-size:10px">${escapeHTML(c.name.slice(0,22))}</span>
-        </div>`).join("")}
-        ${names.length>5?`<div style="color:var(--text3);font-size:10px">+${names.length-5} more</div>`:""}
-      </div>
-    </div>`;
+    function mkCard(s, i, d, phase) {
+      const color = phase === "g1" ? "#3b82f6" : "#22c55e";
+      const total = d.inprog.length + d.stuck.length;
+      const names = [...d.stuck.map(c=>({c,st:"Stuck"})), ...d.inprog.map(c=>({c,st:"In progress"}))];
+      return `<div class="kc" style="border-top-color:${color}">
+        <div class="kc-phase">${phase==="g1"?"GSTR-1":"GSTR-3B"} · Stage ${i+1}</div>
+        <div class="kc-lbl">${escapeHTML(s)}</div>
+        <div class="kc-count" style="color:${color}">${total}</div>
+        <div class="kc-breakdown">
+          ${d.inprog.length?`<span style="color:#3b82f6;font-size:10px;font-weight:700">◉ ${d.inprog.length} in progress</span>`:""}
+          ${d.stuck.length?`<span style="color:#ef4444;font-size:10px;font-weight:700">⚠ ${d.stuck.length} stuck</span>`:""}
+          ${!total?`<span style="color:var(--text3);font-size:10px">No one here</span>`:""}
+        </div>
+        <div class="kc-names">${names.slice(0,5).map(({c,st})=>`
+          <div class="kc-name-item" onclick="openClientModal('${c.id}','${fp}')">
+            <span style="width:6px;height:6px;border-radius:50%;flex-shrink:0;display:inline-block;background:${st==="Stuck"?"#ef4444":"#3b82f6"}"></span>
+            <span style="color:${st==="Stuck"?"var(--red)":"var(--blue)"};font-size:10px">${escapeHTML(c.name.slice(0,22))}</span>
+          </div>`).join("")}
+          ${names.length>5?`<div style="color:var(--text3);font-size:10px">+${names.length-5} more</div>`:""}
+        </div>
+      </div>`;
+    }
+    
+    document.getElementById("tab-stages").innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+      <select id="stg-per" class="sel" onchange="CUR=this.value;renderPeriodBar();renderStages()">${pOpts}</select>
+      <span style="font-size:11px;color:var(--text3)">Click a client name inside any card to open their update panel</span>
+    </div>
+    <div class="sec-h">📄 GSTR-1 Stages</div>
+    <div class="kanban-grid" style="margin-bottom:24px">${G1S.map((s,i)=>mkCard(s,i,g1c[i],"g1")).join("")}</div>
+    <div class="sec-h">📋 GSTR-3B Stages <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(only clients who have filed GSTR-1)</span></div>
+    <div class="kanban-grid">${G3S.map((s,i)=>mkCard(s,i,g3c[i],"g3")).join("")}</div>`;
+  } catch (err) {
+    console.error("Error in renderStages:", err);
+    document.getElementById("tab-stages").innerHTML = `<div class="empty-state" style="color:var(--red);padding:24px;text-align:center">⚠️ Error rendering stages: ${err.message}</div>`;
   }
-  
-  document.getElementById("tab-stages").innerHTML = `
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
-    <select id="stg-per" class="sel" onchange="CUR=this.value;renderPeriodBar();renderStages()">${pOpts}</select>
-    <span style="font-size:11px;color:var(--text3)">Click a client name inside any card to open their update panel</span>
-  </div>
-  <div class="sec-h">📄 GSTR-1 Stages</div>
-  <div class="kanban-grid" style="margin-bottom:24px">${G1S.map((s,i)=>mkCard(s,i,g1c[i],"g1")).join("")}</div>
-  <div class="sec-h">📋 GSTR-3B Stages <span style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text3)">(only clients who have filed GSTR-1)</span></div>
-  <div class="kanban-grid">${G3S.map((s,i)=>mkCard(s,i,g3c[i],"g3")).join("")}</div>`;
 }
 
 // ═══════════════════════════════════════════════════════════════
