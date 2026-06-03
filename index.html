@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="GST Tracker">
 <title>GST Filing Tracker — NAQD Tech</title>
-<link rel="manifest" href="#" id="manifest-link">
+<link rel="manifest" href="manifest.json">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=DM+Mono:wght@400;500&display=swap">
 <style>
@@ -1408,6 +1408,10 @@ GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon;</div>
       <button class="btn btn-ghost" style="width:100%;margin-bottom:8px" onclick="syncNow()">🔄 Sync now</button>
       <button class="btn btn-ghost" style="width:100%;margin-bottom:8px" onclick="exportData()">📥 Export JSON</button>
       <button class="btn" style="width:100%;background:var(--red-lt);color:var(--red);border-color:var(--red-lt)" onclick="resetConnection()">🔌 Change connection</button>
+    </div>
+    <div class="settings-section" id="install-section" style="display:none">
+      <div class="settings-lbl">Application</div>
+      <button class="btn" style="width:100%;background:var(--blue-lt);color:var(--blue);border-color:var(--blue-lt)" onclick="installPWA()">📲 Install App</button>
     </div>
   </div>
   
@@ -5103,8 +5107,6 @@ async function saveWorkspaceFiling(cid, pid) {
 //  INIT
 // ═══════════════════════════════════════════════════════════════
 window.addEventListener("DOMContentLoaded", () => {
-  // Initialize PWA dynamic manifest
-  initPwaManifest();
   
   // Baked-in credentials — no setup needed
   SB_URL = "https://orsosssoxcyylncvgvnb.supabase.co";
@@ -5149,60 +5151,32 @@ window.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-function initPwaManifest() {
-  const manifest = {
-    name: "NAQD Tech GST Filing Tracker",
-    short_name: "GST Tracker",
-    description: "GST Period Filing and Client Workspace Tracker",
-    start_url: ".",
-    display: "standalone",
-    background_color: "#0f172a",
-    theme_color: "#3b82f6",
-    icons: [
-      {
-        src: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%233b82f6'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>📋</text></svg>",
-        sizes: "192x192",
-        type: "image/svg+xml",
-        purpose: "any maskable"
-      },
-      {
-        src: "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%233b82f6'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>📋</text></svg>",
-        sizes: "512x512",
-        type: "image/svg+xml",
-        purpose: "any maskable"
-      }
-    ]
-  };
-  const blob = new Blob([JSON.stringify(manifest)], { type: "application/json" });
-  const manifestUrl = URL.createObjectURL(blob);
-  const link = document.getElementById("manifest-link");
-  if (link) {
-    link.href = manifestUrl;
-  }
-}
-
 // PWA install prompt
 let deferredPrompt;
 window.addEventListener("beforeinstallprompt", e => {
   e.preventDefault();
   deferredPrompt = e;
-  // Show install button if needed
+  const installSec = document.getElementById("install-section");
+  if (installSec) installSec.style.display = "block";
 });
 
-// Service worker registration (inline)
+async function installPWA() {
+  if (!deferredPrompt) return;
+  deferredPrompt.prompt();
+  const { outcome } = await deferredPrompt.userChoice;
+  console.log(`User response to install: ${outcome}`);
+  deferredPrompt = null;
+  const installSec = document.getElementById("install-section");
+  if (installSec) installSec.style.display = "none";
+}
+
+// Service worker registration (static sw.js)
 if ("serviceWorker" in navigator) {
-  const swCode = `
-    const CACHE = "gst-tracker-v1";
-    self.addEventListener("install", e => {
-      e.waitUntil(caches.open(CACHE).then(c => c.addAll(["/"])));
-    });
-    self.addEventListener("fetch", e => {
-      e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
-    });
-  `;
-  const blob = new Blob([swCode], { type: "application/javascript" });
-  const swUrl = URL.createObjectURL(blob);
-  navigator.serviceWorker.register(swUrl).catch(() => {});
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js")
+      .then(reg => console.log("Service Worker registered successfully:", reg.scope))
+      .catch(err => console.error("Service Worker registration failed:", err));
+  });
 }
 </script>
 </body>
