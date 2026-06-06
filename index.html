@@ -324,6 +324,9 @@ body{
   transition:all .2s;
 }
 .hero-card:hover .hc-arr{color:rgba(255,255,255,.7);transform:translateX(3px)}
+.hc-metric-box{transition:all .15s ease;border:1px solid transparent}
+.hc-metric-box:hover{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1)}
+.hc-metric-box.active{background:rgba(255,255,255,.15);border-color:rgba(255,255,255,.2);box-shadow:inset 0 1px 4px rgba(0,0,0,.15)}
 
 /* Status panels */
 .dash-row{display:grid;grid-template-columns:1fr 260px;gap:14px;margin-bottom:18px}
@@ -2575,21 +2578,47 @@ function renderDash() {
   }
 
   const g1NotFiled = all.filter(c => g1St(c.filings[fp]) !== "done").length;
+  const g1Filed    = all.filter(c => g1St(c.filings[fp]) === "done").length;
   const g3NotFiled = all.filter(c => { const s = g3St(c.filings[fp]); return s !== "done" && s !== "locked"; }).length;
+  const g3Filed    = all.filter(c => g3St(c.filings[fp]) === "done").length;
 
   document.getElementById("tab-dash").innerHTML = `
   <div class="hero-grid">
-    <div class="hero-card hc-red" onclick="setKpiFilter('g1-not-filed')">
-      <span class="hc-icon">📄</span><div class="hc-val">${g1NotFiled}</div>
-      <div class="hc-label">GSTR-1 Not Filed</div>
+    <div class="hero-card hc-red" style="padding:16px 18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span class="hc-icon" style="margin-bottom:0">📄</span>
+        <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4)">GSTR-1</span>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:8px">
+        <div onclick="event.stopPropagation();setKpiFilter('g1-not-filed')" class="hc-metric-box${kpiFilter === 'g1-not-filed' ? ' active' : ''}" style="flex:1;cursor:pointer;padding:4px 8px;border-radius:8px">
+          <div class="hc-val">${g1NotFiled}</div>
+          <div class="hc-label" style="font-size:10px;white-space:nowrap">Not Filed</div>
+        </div>
+        <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
+        <div onclick="event.stopPropagation();setKpiFilter('g1-filed')" class="hc-metric-box${kpiFilter === 'g1-filed' ? ' active' : ''}" style="flex:1;cursor:pointer;padding:4px 8px;border-radius:8px">
+          <div class="hc-val" style="color:#22c55e">${g1Filed}</div>
+          <div class="hc-label" style="color:rgba(34,197,94,0.85);font-size:10px;white-space:nowrap">Filed</div>
+        </div>
+      </div>
       <div class="hc-sub">${curLabel} · ${freqLabel}</div>
-      <span class="hc-arr">→</span>
     </div>
-    <div class="hero-card hc-amber" onclick="setKpiFilter('g3-not-filed')">
-      <span class="hc-icon">📋</span><div class="hc-val">${g3NotFiled}</div>
-      <div class="hc-label">GSTR-3B Not Filed</div>
+    <div class="hero-card hc-amber" style="padding:16px 18px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span class="hc-icon" style="margin-bottom:0">📋</span>
+        <span style="font-size:10px;text-transform:uppercase;letter-spacing:0.5px;color:rgba(255,255,255,0.4)">GSTR-3B</span>
+      </div>
+      <div style="display:flex;gap:12px;margin-bottom:8px">
+        <div onclick="event.stopPropagation();setKpiFilter('g3-not-filed')" class="hc-metric-box${kpiFilter === 'g3-not-filed' ? ' active' : ''}" style="flex:1;cursor:pointer;padding:4px 8px;border-radius:8px">
+          <div class="hc-val">${g3NotFiled}</div>
+          <div class="hc-label" style="font-size:10px;white-space:nowrap">Not Filed</div>
+        </div>
+        <div style="width:1px;background:rgba(255,255,255,0.1);align-self:stretch"></div>
+        <div onclick="event.stopPropagation();setKpiFilter('g3-filed')" class="hc-metric-box${kpiFilter === 'g3-filed' ? ' active' : ''}" style="flex:1;cursor:pointer;padding:4px 8px;border-radius:8px">
+          <div class="hc-val" style="color:#22c55e">${g3Filed}</div>
+          <div class="hc-label" style="color:rgba(34,197,94,0.85);font-size:10px;white-space:nowrap">Filed</div>
+        </div>
+      </div>
       <div class="hc-sub">${curLabel} · ${freqLabel}</div>
-      <span class="hc-arr">→</span>
     </div>
     <div class="hero-card hc-red" style="background:linear-gradient(135deg,#4c2e00 0%,#78500a 100%)" onclick="setKpiFilter('client_pending')">
       <span class="hc-icon">👤</span><div class="hc-val">${clientPend}</div>
@@ -2757,8 +2786,12 @@ function filteredClients(fpid) {
     
     if (kpiFilter === "g1-not-filed") {
       if (f && g1St(f) === "done") return false;
+    } else if (kpiFilter === "g1-filed") {
+      if (f && g1St(f) !== "done") return false;
     } else if (kpiFilter === "g3-not-filed") {
       if (f && (g3St(f) === "done" || g3St(f) === "locked")) return false;
+    } else if (kpiFilter === "g3-filed") {
+      if (f && g3St(f) !== "done") return false;
     } else if (kpiFilter) {
       const st = f ? overallSt(f) : "pending";
       if (st !== kpiFilter) return false;
@@ -2785,7 +2818,11 @@ function renderClients() {
   
   let kpiBadgeHtml = "";
   if (kpiFilter) {
-    const label = kpiFilter === "g1-not-filed" ? "GSTR-1 Not Filed" : kpiFilter === "g3-not-filed" ? "GSTR-3B Not Filed" : kpiFilter.toUpperCase();
+    const label = kpiFilter === "g1-not-filed" ? "GSTR-1 Not Filed" 
+                : kpiFilter === "g1-filed" ? "GSTR-1 Filed" 
+                : kpiFilter === "g3-not-filed" ? "GSTR-3B Not Filed" 
+                : kpiFilter === "g3-filed" ? "GSTR-3B Filed" 
+                : kpiFilter.toUpperCase();
     kpiBadgeHtml = `<div class="badge" style="background:var(--amber-lt);color:var(--amber);cursor:pointer;padding:6px 12px;font-size:11px;font-weight:600;border:1px solid rgba(245,158,11,.2);border-radius:6px;display:inline-flex;align-items:center;gap:6px" onclick="kpiFilter=null;renderClients()" title="Click to clear filter">
       <span>Filter: ${label}</span>
       <span style="font-weight:700">✕</span>
